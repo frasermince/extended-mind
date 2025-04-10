@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "hidden-llava"
+version = "0.1.0"
+description = ""
+authors = ["Fraser Mince <frasermince@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+gymnasium = "^1.1.1"
+minigrid = "^3.0.0"
+numpy = "^2.2.4"
+tyro = "^0.9.18"
+torch = "^2.6.0"
+tensorboard = "^2.19.0"
+moviepy = "^2.1.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
