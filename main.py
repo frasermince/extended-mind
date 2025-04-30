@@ -23,12 +23,44 @@ import minigrid
 from minigrid.wrappers import ImgObsWrapper
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Goal, Lava
+from minigrid.core.world_object import Goal, Lava, Box
 from minigrid.minigrid_env import MiniGridEnv
 from gymnasium.envs.registration import register
 
+from networks import GatedAgent
 
-class CrossingEnv(MiniGridEnv):
+
+class ImgObsPositionWrapper(gym.ObservationWrapper):
+    """
+    Use the image as the only observation output, no language/mission.
+
+    Example:
+        >>> import gymnasium as gym
+        >>> from minigrid.wrappers import ImgObsWrapper
+        >>> env = gym.make("MiniGrid-Empty-5x5-v0")
+        >>> obs, _ = env.reset()
+        >>> obs.keys()
+        dict_keys(['image', 'direction', 'mission'])
+        >>> env = ImgObsWrapper(env)
+        >>> obs, _ = env.reset()
+        >>> obs.shape
+        (7, 7, 3)
+    """
+
+    def __init__(self, env):
+        """A wrapper that makes image the only observation.
+
+        Args:
+            env: The environment to apply the wrapper
+        """
+        super().__init__(env)
+        self.observation_space = env.observation_space.spaces["image"]
+
+    def observation(self, obs):
+        return obs["image"], obs
+
+
+class TMaze(MiniGridEnv):
     """
     ## Description
 
@@ -104,19 +136,14 @@ class CrossingEnv(MiniGridEnv):
     def __init__(
         self,
         size=9,
-        num_crossings=1,
-        obstacle_type=Lava,
         max_steps: int | None = None,
         **kwargs,
     ):
-        self.num_crossings = num_crossings
-        self.obstacle_type = obstacle_type
+        # self.num_crossings = num_crossings
+        # self.obstacle_type = obstacle_type
         self.goal_position = None
 
-        if obstacle_type == Lava:
-            mission_space = MissionSpace(mission_func=self._gen_mission_lava)
-        else:
-            mission_space = MissionSpace(mission_func=self._gen_mission)
+        mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
             max_steps = 4 * size**2
@@ -128,14 +155,35 @@ class CrossingEnv(MiniGridEnv):
             max_steps=max_steps,
             **kwargs,
         )
-
-    @staticmethod
-    def _gen_mission_lava():
-        return "avoid the lava and get to the green goal square"
+        image_observation_space = gym.spaces.Box(
+            low=0,
+            high=255,
+            shape=(self.agent_view_size, self.agent_view_size, 3),
+            dtype="uint8",
+        )
+        self.observation_space = gym.spaces.Dict(
+            {
+                "image": image_observation_space,
+                "direction": gym.spaces.Discrete(4),
+                "mission": mission_space,
+                "position": gym.spaces.Box(
+                    low=0,
+                    high=size - 1,
+                    shape=(2,),
+                    dtype="int64",
+                ),
+                "arrow": gym.spaces.Box(
+                    low=0,
+                    high=1,
+                    shape=(1,),
+                    dtype="int64",
+                ),
+            }
+        )
 
     @staticmethod
     def _gen_mission():
-        return "find the opening and get to the green goal square"
+        return "get to the green goal square"
 
     def _gen_grid(self, width, height):
         assert width % 2 == 1 and height % 2 == 1  # odd size
@@ -145,68 +193,116 @@ class CrossingEnv(MiniGridEnv):
 
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
-
+        self.grid.vert_wall(width // 2 - 1, 2, height - 3)
+        self.grid.vert_wall(width // 2 + 1, 2, height - 3)
+        self.grid.horz_wall(0, 0, width)
+        self.grid.horz_wall(0, 2, width // 2)
+        self.grid.horz_wall(width // 2 + 1, 2, width // 2)
+        # self.grid.horz_wall(0, height - 1, width)
         # Place the agent in the top-left corner
-        self.agent_pos = np.array((1, 1))
-        self.agent_dir = 0
+        self.agent_pos = np.array((width // 2, height - 2))
+        self.agent_dir = 3
 
-        # Place a goal square in the bottom-right corner
-        self.put_obj(Goal(), width - 2, height - 2)
-        self.goal_position = (width - 2, height - 2)
+        # Either place a goal square in the top-left or top-right corner
+        goal_positions = [(1, 1), (width - 2, 1)]
+        self.goal_position = self.np_random.choice(goal_positions)
+        self.arrow_position = self.goal_position == (width - 2, 1)
+        self.put_obj(Goal(), *self.goal_position)
 
-        # Place obstacles (lava or walls)
-        v, h = object(), object()  # singleton `vertical` and `horizontal` objects
+        # Place a green box in a random valid position
+        # while True:
+        #     box_pos = (
+        #         self.np_random.integers(1, width - 1),
+        #         self.np_random.integers(1, height - 1),
+        #     )
+        #     # Don't place box on agent start or goal positions
+        #     if (
+        #         box_pos != (1, 1)
+        #         and box_pos != (width - 2, height - 2)
+        #         and self.grid.get(*box_pos) is None
+        #     ):
+        #         green_box = Box("blue")
+        #         self.put_obj(green_box, *box_pos)
+        #         break
 
-        # Lava rivers or walls specified by direction and position in grid
-        rivers = [(v, i) for i in range(2, height - 2, 2)]
-        rivers += [(h, j) for j in range(2, width - 2, 2)]
-        self.np_random.shuffle(rivers)
-        rivers = rivers[: self.num_crossings]  # sample random rivers
-        rivers_v = sorted(pos for direction, pos in rivers if direction is v)
-        rivers_h = sorted(pos for direction, pos in rivers if direction is h)
-        obstacle_pos = itt.chain(
-            itt.product(range(1, width - 1), rivers_h),
-            itt.product(rivers_v, range(1, height - 1)),
-        )
-        for i, j in obstacle_pos:
-            self.put_obj(self.obstacle_type(), i, j)
+        # # Place obstacles (lava or walls)
+        # v, h = object(), object()  # singleton `vertical` and `horizontal` objects
+
+        # # Lava rivers or walls specified by direction and position in grid
+        # rivers = [(v, i) for i in range(2, height - 2, 2)]
+        # rivers += [(h, j) for j in range(2, width - 2, 2)]
+        # self.np_random.shuffle(rivers)
+        # rivers = rivers[: self.num_crossings]  # sample random rivers
+        # rivers_v = sorted(pos for direction, pos in rivers if direction is v)
+        # rivers_h = sorted(pos for direction, pos in rivers if direction is h)
+        # obstacle_pos = itt.chain(
+        #     itt.product(range(1, width - 1), rivers_h),
+        #     itt.product(rivers_v, range(1, height - 1)),
+        # )
+        # for i, j in obstacle_pos:
+        #     self.put_obj(self.obstacle_type(), i, j)
 
         # Sample path to goal
-        path = [h] * len(rivers_v) + [v] * len(rivers_h)
-        self.np_random.shuffle(path)
+        # path = [h] * len(rivers_v) + [v] * len(rivers_h)
+        # self.np_random.shuffle(path)
 
         # Create openings
-        limits_v = [0] + rivers_v + [height - 1]
-        limits_h = [0] + rivers_h + [width - 1]
-        room_i, room_j = 0, 0
-        for direction in path:
-            if direction is h:
-                i = limits_v[room_i + 1]
-                j = self.np_random.choice(
-                    range(limits_h[room_j] + 1, limits_h[room_j + 1])
-                )
-                room_i += 1
-            elif direction is v:
-                i = self.np_random.choice(
-                    range(limits_v[room_i] + 1, limits_v[room_i + 1])
-                )
-                j = limits_h[room_j + 1]
-                room_j += 1
-            else:
-                assert False
-            self.grid.set(i, j, None)
+        # limits_v = [0] + rivers_v + [height - 1]
+        # limits_h = [0] + rivers_h + [width - 1]
+        # room_i, room_j = 0, 0
+        # for direction in path:
+        #     if direction is h:
+        #         i = limits_v[room_i + 1]
+        #         j = self.np_random.choice(
+        #             range(limits_h[room_j] + 1, limits_h[room_j + 1])
+        #         )
+        #         room_i += 1
+        #     elif direction is v:
+        #         i = self.np_random.choice(
+        #             range(limits_v[room_i] + 1, limits_v[room_i + 1])
+        #         )
+        #         j = limits_h[room_j + 1]
+        #         room_j += 1
+        #     else:
+        #         assert False
+        #     self.grid.set(i, j, None)
 
-        self.mission = (
-            "avoid the lava and get to the green goal square"
-            if self.obstacle_type == Lava
-            else "find the opening and get to the green goal square"
-        )
+        self.mission = "get to the green goal square"
+
+    def gen_obs(self):
+        """
+        Generate the agent's view (partially observable, low-resolution encoding)
+        """
+
+        grid, vis_mask = self.gen_obs_grid()
+
+        # Encode the partially observable view into a numpy array
+        image = grid.encode(vis_mask)
+
+        # Observations are dictionaries containing:
+        # - an image (partially observable view of the environment)
+        # - the agent's direction/orientation (acting as a compass)
+        # - a textual mission string (instructions for the agent)
+
+        print(self.agent_pos)
+        maybe_random_arrow = np.random.randint(0, 1)
+        if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
+            maybe_random_arrow = self.arrow_position
+
+        obs = {
+            "image": image,
+            "direction": self.agent_dir,
+            "mission": self.mission,
+            "position": self.agent_pos,
+            "arrow": float(maybe_random_arrow),
+        }
+        return obs
 
 
 register(
-    id="MiniGrid-LavaCrossingS9N3-v0-custom",
-    entry_point="minigrid.envs:CrossingEnv",
-    kwargs={"size": 9, "num_crossings": 1},
+    id="MiniGrid-TMaze-v0-custom",
+    entry_point="main:TMaze",
+    kwargs={"size": 9},
 )
 
 
@@ -230,7 +326,7 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "MiniGrid-LavaCrossingS9N3-v0-custom"
+    env_id: str = "MiniGrid-TMaze-v0-custom"
     """the id of the environment"""
     total_timesteps: int = 5000000
     """total timesteps of the experiments"""
@@ -264,6 +360,8 @@ class Args:
     """the maximum norm for the gradient clipping"""
     target_kl: float = None
     """the target KL divergence threshold"""
+    compute_penalty: float = 0.003
+    """negative reward whenever the heavy branch is executed"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -274,18 +372,23 @@ class Args:
     """the number of iterations (computed in runtime)"""
 
 
-def make_env(env_id, idx, capture_video, run_name):
+def make_env(env_id, capture_video, run_name):
     def thunk():
-        if capture_video and idx == 0:
+        if capture_video:
             env = gym.make(env_id, render_mode="rgb_array")
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+            env = gym.wrappers.RecordVideo(
+                env,
+                f"videos/{run_name}",
+                # step_trigger=lambda x: x % 10 == 0,
+                # video_length=10,
+            )
         else:
             env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = ImgObsWrapper(env)
+        env = ImgObsPositionWrapper(env)
         return env
 
-    return thunk
+    return thunk()
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -358,26 +461,22 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     # env setup
-    envs = gym.vector.SyncVectorEnv(
-        [
-            make_env(args.env_id, i, args.capture_video, run_name)
-            for i in range(args.num_envs)
-        ],
-    )
+    envs = make_env(args.env_id, args.capture_video, run_name)
     assert isinstance(
-        envs.single_action_space, gym.spaces.Discrete
+        envs.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    agent = Agent(envs).to(device)
+    agent = GatedAgent(envs).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ALGO Logic: Storage setup
     obs = torch.zeros(
-        (args.num_steps, args.num_envs) + envs.single_observation_space.shape
+        (args.num_steps, args.num_envs) + envs.observation_space.shape
     ).to(device)
-    actions = torch.zeros(
-        (args.num_steps, args.num_envs) + envs.single_action_space.shape
-    ).to(device)
+    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_space.shape).to(
+        device
+    )
+    arrows = torch.zeros((args.num_steps, args.num_envs)).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -386,8 +485,10 @@ if __name__ == "__main__":
     # TRY NOT TO MODIFY: start the game
     global_step = 0
     start_time = time.time()
-    next_obs, _ = envs.reset(seed=args.seed)
+    (next_obs, full_obs), _ = envs.reset(seed=args.seed)
     next_obs = torch.Tensor(next_obs).to(device)
+    next_obs = next_obs.unsqueeze(0)
+
     next_done = torch.zeros(args.num_envs).to(device)
 
     for iteration in range(1, args.num_iterations + 1):
@@ -400,20 +501,29 @@ if __name__ == "__main__":
         for step in range(0, args.num_steps):
             global_step += args.num_envs
             obs[step] = next_obs
+            arrows[step] = full_obs["arrow"]
             dones[step] = next_done
 
             # ALGO LOGIC: action logic
             with torch.no_grad():
-                action, logprob, _, value = agent.get_action_and_value(next_obs)
+                action, logprob, _, value = agent.get_action_and_value(
+                    next_obs, arrow=torch.tensor(full_obs["arrow"]).unsqueeze(0)
+                )
                 values[step] = value.flatten()
             actions[step] = action
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, reward, terminations, truncations, infos = envs.step(
+            (next_obs, full_obs), reward, terminations, truncations, infos = envs.step(
                 action.cpu().numpy()
             )
-            # print(reward)
+            next_obs = np.expand_dims(next_obs, axis=0)
+            terminations = np.expand_dims(terminations, axis=0)
+            truncations = np.expand_dims(truncations, axis=0)
+
+            # If the heavy branch was used add the compute penalty
+            penalty = (1 - agent._last_gate.float()) * args.compute_penalty
+            reward -= penalty.cpu().numpy()  # broadcast over envs
             next_done = np.logical_or(terminations, truncations)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(
@@ -421,18 +531,16 @@ if __name__ == "__main__":
             ).to(device)
 
             if any(terminations) or any(truncations):
-                for i, is_episode in enumerate(infos["_episode"]):
-                    if is_episode:
-                        writer.add_scalar(
-                            "charts/episodic_return",
-                            infos["episode"]["r"][i],
-                            global_step,
-                        )
-                        writer.add_scalar(
-                            "charts/episodic_length",
-                            infos["episode"]["l"][i],
-                            global_step,
-                        )
+                writer.add_scalar(
+                    "charts/episodic_return",
+                    infos["episode"]["r"],
+                    global_step,
+                )
+                writer.add_scalar(
+                    "charts/episodic_length",
+                    infos["episode"]["l"],
+                    global_step,
+                )
 
         # bootstrap value if not done
         with torch.no_grad():
@@ -455,9 +563,9 @@ if __name__ == "__main__":
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_obs = obs.reshape((-1,) + envs.observation_space.shape)
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+        b_actions = actions.reshape((-1,) + envs.action_space.shape)
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
@@ -472,7 +580,9 @@ if __name__ == "__main__":
                 mb_inds = b_inds[start:end]
 
                 _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                    b_obs[mb_inds], b_actions.long()[mb_inds]
+                    b_obs[mb_inds],
+                    b_actions.long()[mb_inds],
+                    arrow=torch.tensor(full_obs["arrow"]).unsqueeze(0),
                 )
                 logratio = newlogprob - b_logprobs[mb_inds]
                 ratio = logratio.exp()
