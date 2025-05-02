@@ -15,6 +15,10 @@ torch = "^2.6.0"
 tensorboard = "^2.19.0"
 moviepy = "^2.1.2"
 colt5-attention = "^0.11.1"
+flax = "^0.10.6"
+jax = "^0.6.0"
+optax = "^0.2.4"
+stable-baselines3 = "^2.6.0"
 
 
 [build-system]
