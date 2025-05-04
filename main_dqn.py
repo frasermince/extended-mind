@@ -15,13 +15,15 @@ import numpy as np
 import optax
 import tyro
 from flax.training.train_state import TrainState
-from gymnasium.core import ActType, ObsType
+from gymnasium.core import ActType, ObsType, WrapperObsType
+from gymnasium import spaces
 from gymnasium.envs.registration import register
 from minigrid.core.constants import OBJECT_TO_IDX, TILE_PIXELS
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Box, Goal, Lava, Wall, WorldObj
 from minigrid.minigrid_env import MiniGridEnv
+from gymnasium.wrappers import TransformObservation
 from minigrid.utils.rendering import (
     downsample,
     fill_coords,
@@ -38,6 +40,102 @@ from torch.utils.tensorboard import SummaryWriter
 from networks_jax import CheapNet, GatedDQN, HeavyNet
 
 from typing import Any, Iterable, SupportsFloat, TypeVar
+
+
+class GrayscaleObservation(
+    TransformObservation[WrapperObsType, ActType, ObsType],
+    gym.utils.RecordConstructorArgs,
+):
+    """Converts an image observation computed by ``reset`` and ``step`` from RGB to Grayscale.
+
+    The :attr:`keep_dim` will keep the channel dimension.
+
+    A vector version of the wrapper exists :class:`gymnasium.wrappers.vector.GrayscaleObservation`.
+
+    Example:
+        >>> import gymnasium as gym
+        >>> from gymnasium.wrappers import GrayscaleObservation
+        >>> env = gym.make("CarRacing-v3")
+        >>> env.observation_space.shape
+        (96, 96, 3)
+        >>> grayscale_env = GrayscaleObservation(env)
+        >>> grayscale_env.observation_space.shape
+        (96, 96)
+        >>> grayscale_env = GrayscaleObservation(env, keep_dim=True)
+        >>> grayscale_env.observation_space.shape
+        (96, 96, 1)
+
+    Change logs:
+     * v0.15.0 - Initially added, originally called ``GrayScaleObservation``
+     * v1.0.0 - Renamed to ``GrayscaleObservation``
+    """
+
+    def __init__(self, env: gym.Env[ObsType, ActType], keep_dim: bool = False):
+        """Constructor for an RGB image based environments to make the image grayscale.
+
+        Args:
+            env: The environment to wrap
+            keep_dim: If to keep the channel in the observation, if ``True``, ``obs.shape == 3`` else ``obs.shape == 2``
+        """
+        assert isinstance(env.observation_space.spaces["image"], spaces.Box)
+        assert (
+            len(env.observation_space.spaces["image"].shape) == 3
+            and env.observation_space.spaces["image"].shape[-1] == 3
+        )
+        assert (
+            np.all(env.observation_space.spaces["image"].low == 0)
+            and np.all(env.observation_space.spaces["image"].high == 255)
+            and env.observation_space.spaces["image"].dtype == np.uint8
+        )
+        gym.utils.RecordConstructorArgs.__init__(self, keep_dim=keep_dim)
+
+        self.keep_dim: Final[bool] = keep_dim
+        if keep_dim:
+            new_observation_image_space = spaces.Box(
+                low=0,
+                high=255,
+                shape=env.observation_space.spaces["image"].shape[:2] + (1,),
+                dtype=np.uint8,
+            )
+            new_observation_space = env.observation_space
+            new_observation_space.spaces["image"] = new_observation_image_space
+            TransformObservation.__init__(
+                self,
+                env=env,
+                func=lambda obs: {
+                    **obs,
+                    "image": np.expand_dims(
+                        np.sum(
+                            np.multiply(
+                                obs["image"], np.array([0.2125, 0.7154, 0.0721])
+                            ),
+                            axis=-1,
+                        ).astype(np.uint8),
+                        axis=-1,
+                    ),
+                },
+                observation_space=new_observation_space,
+            )
+        else:
+            new_observation_space = env.observation_space
+            new_observation_space.spaces["image"] = spaces.Box(
+                low=0,
+                high=255,
+                shape=env.observation_space.spaces["image"].shape[:2],
+                dtype=np.uint8,
+            )
+            TransformObservation.__init__(
+                self,
+                env=env,
+                func=lambda obs: {
+                    **obs,
+                    "image": np.sum(
+                        np.multiply(obs["image"], np.array([0.2125, 0.7154, 0.0721])),
+                        axis=-1,
+                    ).astype(np.uint8),
+                },
+                observation_space=new_observation_space,
+            )
 
 
 class DirectionlessGrid(Grid):
@@ -323,14 +421,14 @@ class TMaze(MiniGridEnv):
         # Either place a goal square in the top-left or top-right corner
         goal_positions = [(1, 1), (width - 2, 1)]
         self.goal_position = goal_positions[self.np_random.integers(2)]
-        print(self.goal_position)
+        # print(self.goal_position)
         # Alternative: self.goal_position = self.np_random.choice(goal_positions, size=1)[0]
 
         self.arrow_q_values = np.zeros(self.action_space.n)
         self.arrow_q_values[
             int(np.array_equal(self.goal_position, np.array((width - 2, 1))))
         ] = 1.0
-        self.put_obj(Goal(), *self.goal_position)
+        # self.put_obj(Goal(), *self.goal_position)
 
         # Place a green box in a random valid position
         # while True:
@@ -396,7 +494,7 @@ class TMaze(MiniGridEnv):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        blue_box = Goal("blue")
+        blue_box = Goal("grey")
         self.grid.set(self.width * 3 // 4 - 1, self.height * 2 // 3 - 1, None)
         self.grid.set(self.width * 3 // 4 + 1, self.height * 2 // 3 - 1, None)
         if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
@@ -435,6 +533,45 @@ class TMaze(MiniGridEnv):
             "arrow": maybe_random_arrow,
         }
         return obs
+
+    def get_full_render(self, highlight, tile_size):
+        """
+        Render a non-paratial observation for visualization
+        """
+        # Compute which cells are visible to the agent
+        _, vis_mask = self.gen_obs_grid()
+
+        # Compute the world coordinates of the bottom-left corner
+        # of the agent's view area
+        f_vec = self.dir_vec
+        r_vec = self.right_vec
+        top_left = (
+            self.agent_pos
+            + f_vec * (self.agent_view_size - 1)
+            - r_vec * (self.agent_view_size // 2)
+        )
+
+        # For each cell in the visibility mask
+        for vis_j in range(0, self.agent_view_size):
+            for vis_i in range(0, self.agent_view_size):
+                # If this cell is not visible, don't highlight it
+                if not vis_mask[vis_i, vis_j]:
+                    continue
+
+                # Compute the world coordinates of this cell
+                abs_i, abs_j = top_left - (f_vec * vis_j) + (r_vec * vis_i)
+
+                if abs_i < 0 or abs_i >= self.width:
+                    continue
+                if abs_j < 0 or abs_j >= self.height:
+                    continue
+
+        # Render the whole grid
+        img = self.grid.render(
+            tile_size, self.agent_pos, self.agent_dir, highlight_mask=None
+        )
+
+        return img
 
     def step(
         self, action: ActType
@@ -575,6 +712,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         if capture_video and idx == 1:
             env = gym.make(env_id, render_mode="rgb_array")
             env = minigrid.wrappers.RGBImgObsWrapper(env)
+            env = GrayscaleObservation(env)
             env = gym.wrappers.RecordVideo(
                 env,
                 f"videos/{run_name}",
@@ -582,6 +720,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         else:
             env = gym.make(env_id)
             env = minigrid.wrappers.RGBImgObsWrapper(env)
+            env = GrayscaleObservation(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
         env.action_space.seed(seed)
@@ -659,6 +798,11 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     ), "only discrete action space is supported"
 
     obs, _ = envs.reset(seed=args.seed)
+    import matplotlib.pyplot as plt
+
+    plt.imshow(obs["image"], cmap="gray")
+    plt.savefig("obs_image.png")
+    plt.close()
     q_network = HeavyNet(
         # obs_shape=envs.observation_space.shape,
         action_dim=envs.action_space.n,
@@ -676,6 +820,12 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             jnp.expand_dims(jnp.array([obs["arrow"]]), 0),
         ),
         tx=optax.adam(learning_rate=args.learning_rate),
+    )
+    print(
+        "params",
+        sum(x.size for x in jax.tree.leaves(q_state.params)),
+        "target_params",
+        sum(x.size for x in jax.tree.leaves(q_state.target_params)),
     )
 
     q_network.apply = jax.jit(q_network.apply)
