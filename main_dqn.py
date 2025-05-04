@@ -106,7 +106,8 @@ class GrayscaleObservation(
                     **obs,
                     "image": np.expand_dims(
                         np.sum(
-                            np.multiply(
+                            255
+                            - np.multiply(
                                 obs["image"], np.array([0.2125, 0.7154, 0.0721])
                             ),
                             axis=-1,
@@ -130,7 +131,8 @@ class GrayscaleObservation(
                 func=lambda obs: {
                     **obs,
                     "image": np.sum(
-                        np.multiply(obs["image"], np.array([0.2125, 0.7154, 0.0721])),
+                        255
+                        - np.multiply(obs["image"], np.array([0.2125, 0.7154, 0.0721])),
                         axis=-1,
                     ).astype(np.uint8),
                 },
@@ -223,6 +225,9 @@ class DirectionlessGrid(Grid):
 
                 agent_here = np.array_equal(agent_pos, (i, j))
                 assert highlight_mask is not None
+
+                if isinstance(cell, Goal) and cell.color == "green":
+                    cell = None
                 tile_img = DirectionlessGrid.render_tile(
                     cell,
                     agent_dir=agent_dir if agent_here else None,
@@ -428,7 +433,7 @@ class TMaze(MiniGridEnv):
         self.arrow_q_values[
             int(np.array_equal(self.goal_position, np.array((width - 2, 1))))
         ] = 1.0
-        # self.put_obj(Goal(), *self.goal_position)
+        self.put_obj(Goal(), *self.goal_position)
 
         # Place a green box in a random valid position
         # while True:
