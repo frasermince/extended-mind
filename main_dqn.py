@@ -33,6 +33,7 @@ from minigrid.utils.rendering import (
     point_in_triangle,
     rotate_fn,
 )
+from tqdm import tqdm
 from minigrid.wrappers import ImgObsWrapper
 from stable_baselines3.common.buffers import DictReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
@@ -141,6 +142,10 @@ class GrayscaleObservation(
 
 
 class DirectionlessGrid(Grid):
+    def __init__(self, *args, **kwargs):
+        self.invisible_goal = kwargs.pop("invisible_goal", False)
+        super().__init__(*args, **kwargs)
+
     @classmethod
     def render_tile(
         cls,
@@ -226,7 +231,11 @@ class DirectionlessGrid(Grid):
                 agent_here = np.array_equal(agent_pos, (i, j))
                 assert highlight_mask is not None
 
-                if isinstance(cell, Goal) and cell.color == "green":
+                if (
+                    isinstance(cell, Goal)
+                    and cell.color == "green"
+                    and self.invisible_goal
+                ):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
                     cell,
@@ -360,12 +369,14 @@ class TMaze(MiniGridEnv):
         # self.num_crossings = num_crossings
         # self.obstacle_type = obstacle_type
         self.goal_position = None
+        self.path_threshold = 30
 
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
             max_steps = 4 * size**2
 
+        self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
             mission_space=mission_space,
             grid_size=size,
@@ -409,7 +420,7 @@ class TMaze(MiniGridEnv):
         assert width % 2 == 1 and height % 2 == 1  # odd size
 
         # Create an empty grid
-        self.grid = DirectionlessGrid(width, height)
+        self.grid = DirectionlessGrid(width, height, invisible_goal=self.invisible_goal)
 
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
@@ -499,20 +510,34 @@ class TMaze(MiniGridEnv):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        blue_box = Goal("grey")
-        self.grid.set(self.width * 3 // 4 - 1, self.height * 2 // 3 - 1, None)
-        self.grid.set(self.width * 3 // 4 + 1, self.height * 2 // 3 - 1, None)
-        if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
-            maybe_goal_corner = int(
-                np.array_equal(self.goal_position, np.array((self.width - 2, 1)))
-            )
-        else:
-            maybe_goal_corner = np.random.randint(0, 2)
+        grey_box = Goal("grey")
+        left_box = (self.width * 3 // 4 - 1, self.height * 2 // 3 - 1)
+        right_box = (self.width * 3 // 4 + 1, self.height * 2 // 3 - 1)
+        up_box = (self.width * 3 // 4, self.height * 2 // 3 - 2)
+        down_box = (self.width * 3 // 4, self.height * 2 // 3)
+        box_locations = [left_box, right_box, up_box, down_box]
+        for box in box_locations:
+            self.grid.set(box[0], box[1], None)
 
-        maybe_goal_diff = int(maybe_goal_corner) * 2
-        w = self.width * 3 // 4 - 1 + maybe_goal_diff
-        h = self.height * 2 // 3 - 1
-        self.put_obj(blue_box, w, h)
+        goal_is_right = int(
+            np.array_equal(self.goal_position, np.array((self.width - 2, 1)))
+        )
+        # if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
+
+        # else:
+        #     maybe_goal_corner = np.random.randint(0, 2)
+
+        if self.agent_pos[1] == 1:
+            w, h = right_box if goal_is_right else left_box
+        else:
+            w, h = up_box
+        if self.step_count > self.path_threshold:
+            self.put_obj(grey_box, w, h)
+        else:
+            # Randomly decide whether to place box at selected location
+            for box in box_locations:
+                if self.np_random.random() < 0.5:
+                    self.put_obj(grey_box, box[0], box[1])
         grid, vis_mask = self.gen_obs_grid()
 
         # Encode the partially observable view into a numpy array
@@ -653,6 +678,10 @@ class TMaze(MiniGridEnv):
         return obs, reward, terminated, truncated, {}
 
 
+# With this env reward would be
+# 1 - 0.9 * (STEPS / MAX_STEPS)
+# Optimal reward would be:
+# 1 - 0.9 * (12 / 484) = 0.9776859504
 register(
     id="MiniGrid-TMaze-v0-custom",
     entry_point="main_dqn:TMaze",
@@ -666,11 +695,11 @@ class Args:
     """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
-    track: bool = False
+    track: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "cleanRL"
+    wandb_project_name: str = "TMaze"
     """the wandb's project name"""
-    wandb_entity: str = None
+    wandb_entity: str = "frasermince"
     """the entity (team) of wandb's project"""
     capture_video: bool = True
     """whether to capture videos of the agent performances (check out `videos` folder)"""
@@ -680,14 +709,16 @@ class Args:
     """whether to upload the saved model to huggingface"""
     hf_entity: str = ""
     """the user or org name of the model repository from the Hugging Face Hub"""
+    experiment_description: str = "seen-goal"
 
     # Algorithm specific arguments
     env_id: str = "MiniGrid-TMaze-v0-custom"
     """the id of the environment"""
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = 2.5e-4
+    learning_rate: float = 5e-5
     """the learning rate of the optimizer"""
+    invisible_goal: bool = False
     num_envs: int = 1
     """the number of parallel game environments"""
     buffer_size: int = 10000
@@ -712,10 +743,12 @@ class Args:
     """the frequency of training"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+def make_env(env_id, seed, idx, capture_video, run_name, invisible_goal):
     def thunk():
         if capture_video and idx == 1:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(
+                env_id, render_mode="rgb_array", invisible_goal=invisible_goal
+            )
             env = minigrid.wrappers.RGBImgObsWrapper(env)
             env = GrayscaleObservation(env)
             env = gym.wrappers.RecordVideo(
@@ -770,7 +803,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         )
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.env_id}__{args.exp_name}__seed_{args.seed}__{int(time.time())}__{args.experiment_description}__learning_rate_{args.learning_rate}"
     if args.track:
         import wandb
 
@@ -797,7 +830,9 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     key, q_key = jax.random.split(key, 2)
 
     # env setup
-    envs = make_env(args.env_id, args.seed + 1, 1, args.capture_video, run_name)()
+    envs = make_env(
+        args.env_id, args.seed + 1, 1, args.capture_video, run_name, args.invisible_goal
+    )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
@@ -892,7 +927,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     terminations = np.array([False])
     truncations = np.array([False])
     seed = args.seed
-    for global_step in range(args.total_timesteps):
+    for global_step in tqdm(range(args.total_timesteps)):
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
             args.start_e,
@@ -926,18 +961,25 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         truncations = np.expand_dims(truncations, axis=0)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
-        # if "final_info" in infos:
-        #     for info in infos["final_info"]:
-        #         if info and "episode" in info:
-        #             print(
-        #                 f"global_step={global_step}, episodic_return={info['episode']['r']}"
-        #             )
-        #             writer.add_scalar(
-        #                 "charts/episodic_return", info["episode"]["r"], global_step
-        #             )
-        #             writer.add_scalar(
-        #                 "charts/episodic_length", info["episode"]["l"], global_step
-        #             )
+        if np.any(truncations) or np.any(terminations):
+            writer.add_scalar(
+                "charts/episodic_return", infos["episode"]["r"], global_step
+            )
+            writer.add_scalar(
+                "charts/episodic_length", infos["episode"]["l"], global_step
+            )
+            # if "final_info" in infos:
+            #     for info in infos["final_info"]:
+            #         if info and "episode" in info:
+            #         print(
+            #             f"global_step={global_step}, episodic_return={info['episode']['r']}"
+            #         )
+            #         writer.add_scalar(
+            #             "charts/episodic_return", info["episode"]["r"], global_step
+            #         )
+            #         writer.add_scalar(
+            #             "charts/episodic_length", info["episode"]["l"], global_step
+            #         )
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
