@@ -237,6 +237,8 @@ class DirectionlessGrid(Grid):
                     and self.invisible_goal
                 ):
                     cell = None
+                if isinstance(cell, Lava) and self.invisible_goal:
+                    cell = None
                 tile_img = DirectionlessGrid.render_tile(
                     cell,
                     agent_dir=agent_dir if agent_here else None,
@@ -369,12 +371,13 @@ class TMaze(MiniGridEnv):
         # self.num_crossings = num_crossings
         # self.obstacle_type = obstacle_type
         self.goal_position = None
-        self.path_threshold = 30
+        self.path_episode_threshold = 2000
+        self.num_episodes = 0
 
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
-            max_steps = 4 * size**2
+            max_steps = 2 * size**2
 
         self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
@@ -412,6 +415,10 @@ class TMaze(MiniGridEnv):
             }
         )
 
+    def reset(self, *, seed: int | None = None, options: dict | None = None):
+        self.num_episodes += 1
+        return super().reset(seed=seed, options=options)
+
     @staticmethod
     def _gen_mission():
         return "get to the green goal square"
@@ -436,7 +443,10 @@ class TMaze(MiniGridEnv):
 
         # Either place a goal square in the top-left or top-right corner
         goal_positions = [(1, 1), (width - 2, 1)]
-        self.goal_position = goal_positions[self.np_random.integers(2)]
+        goal_choice = self.np_random.integers(2)
+        lava_choice = 1 - goal_choice
+        self.goal_position = goal_positions[goal_choice]
+        self.lava_position = goal_positions[lava_choice]
         # print(self.goal_position)
         # Alternative: self.goal_position = self.np_random.choice(goal_positions, size=1)[0]
 
@@ -445,7 +455,7 @@ class TMaze(MiniGridEnv):
             int(np.array_equal(self.goal_position, np.array((width - 2, 1))))
         ] = 1.0
         self.put_obj(Goal(), *self.goal_position)
-
+        self.put_obj(Lava(), *self.lava_position)
         # Place a green box in a random valid position
         # while True:
         #     box_pos = (
@@ -531,7 +541,7 @@ class TMaze(MiniGridEnv):
             w, h = right_box if goal_is_right else left_box
         else:
             w, h = up_box
-        if self.step_count > self.path_threshold:
+        if self.num_episodes > self.path_episode_threshold:
             self.put_obj(grey_box, w, h)
         else:
             # Randomly decide whether to place box at selected location
@@ -564,6 +574,7 @@ class TMaze(MiniGridEnv):
         }
         return obs
 
+    # Customized to remove highlight mask
     def get_full_render(self, highlight, tile_size):
         """
         Render a non-paratial observation for visualization
