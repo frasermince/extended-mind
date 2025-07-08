@@ -18,7 +18,7 @@ from flax.training.train_state import TrainState
 from gymnasium.core import ActType, ObsType, WrapperObsType
 from gymnasium import spaces
 from gymnasium.envs.registration import register
-from minigrid.core.constants import OBJECT_TO_IDX, TILE_PIXELS
+from minigrid.core.constants import OBJECT_TO_IDX
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Box, Goal, Lava, Wall, WorldObj
@@ -41,6 +41,112 @@ from torch.utils.tensorboard import SummaryWriter
 from networks_jax import CheapNet, GatedDQN, HeavyNet
 
 from typing import Any, Iterable, SupportsFloat, TypeVar
+
+
+TILE_SAMPLE_PIXELS = 64
+TILE_PIXELS = 32
+
+
+class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
+    def _capture_frame(self):
+        assert self.recording, "Cannot capture a frame, recording wasn't started."
+
+        frame = self.render()
+        if isinstance(frame, list):
+            if len(frame) == 0:  # render was called
+                return
+            self.render_history += frame
+            frame = frame[-1]
+
+        if isinstance(frame, np.ndarray):
+            self.recorded_frames.append(frame)
+        else:
+            self.stop_recording()
+            logger.warn(
+                f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
+            )
+
+    def render(self):
+        img_total = self.env.unwrapped.get_full_render(
+            self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
+        )
+        img_partial = self.env.unwrapped.get_pov_render(self.env.unwrapped.tile_size)
+        # Stack img_total and img_partial vertically with a padding in between
+
+        # Ensure both images have the same width; if not, pad the smaller one
+        h1, w1, c1 = img_total.shape
+        h2, w2, c2 = img_partial.shape
+        pad_color = 255  # white padding
+
+        # Determine the max width and number of channels
+        max_w = max(w1, w2)
+        max_c = max(c1, c2)
+
+        def pad_img(img, target_w, target_c):
+            h, w, c = img.shape
+            # Pad width if needed, split between left and right
+            if w < target_w:
+                total_pad = target_w - w
+                pad_left = total_pad // 2
+                pad_right = total_pad - pad_left
+                pad_width = ((0, 0), (pad_left, pad_right), (0, 0))
+                img = np.pad(img, pad_width, mode="constant", constant_values=pad_color)
+            # Pad channels if needed
+            if c < target_c:
+                total_pad = target_c - c
+                pad_left = total_pad // 2
+                pad_right = total_pad - pad_left
+                pad_channels = ((0, 0), (0, 0), (pad_left, pad_right))
+                img = np.pad(
+                    img, pad_channels, mode="constant", constant_values=pad_color
+                )
+            return img
+
+        img_total_padded = pad_img(img_total, max_w, max_c)
+        img_partial_padded = pad_img(img_partial, max_w, max_c)
+
+        # Create a padding row (e.g., 10 pixels high)
+        pad_height = 10
+        padding = np.full((pad_height, max_w, max_c), pad_color, dtype=img_total.dtype)
+        padding_bottom = np.full((30, max_w, max_c), pad_color, dtype=img_total.dtype)
+
+        # Concatenate: total on top, then padding, then partial
+        render_out = [
+            np.concatenate(
+                [img_total_padded, padding, img_partial_padded, padding_bottom], axis=0
+            )
+        ]
+        if self.recording and isinstance(render_out, list):
+            self.recorded_frames += render_out
+
+        if len(self.render_history) > 0:
+            tmp_history = self.render_history
+            self.render_history = []
+            return tmp_history + render_out
+        else:
+            return render_out
+
+    # def _capture_frame(self):
+    #     assert self.recording, "Cannot capture a frame, recording wasn't started."
+
+    #     frame_total, frame_partial = self.env.unwrapped.render_for_record()
+    #     import pdb
+
+    #     pdb.set_trace()
+
+    #     if isinstance(frame, list):
+    #         if len(frame) == 0:  # render was called
+    #             return
+    #         self.render_history += frame
+    #         frame = frame[-1]
+
+    #     if isinstance(frame, np.ndarray):
+    #         self.recorded_frames.append(frame)
+    #     else:
+    #         self.stop_recording()
+    #         logger.warn(
+    #             f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
+    #         )
 
 
 class GrayscaleObservation(
@@ -143,42 +249,113 @@ class GrayscaleObservation(
 
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
-        self.invisible_goal = kwargs.pop("invisible_goal", False)
+        # self.invisible_goal = kwargs.pop("invisible_goal", False)
+        # self.tile_size = kwargs.pop("tile_size", TILE_PIXELS)
+        self.unique_tiles = kwargs.pop("unique_tiles", None)
+        self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
+        show_grid_lines = kwargs.pop("show_grid_lines", False)
+        self.pad_width = kwargs.pop("pad_width", None)
+        self.show_grid_lines = show_grid_lines
         super().__init__(*args, **kwargs)
+
+        # if self.unique_tiles is None:
+        #     self.unique_tiles = np.zeros(
+        #         (
+        #             self.width + 2 * self.pad_width,
+        #             self.height + 2 * self.pad_width,
+        #             self.tile_size,
+        #             self.tile_size,
+        #             3,
+        #         ),
+        #         dtype=np.uint8,
+        #     )
+        #     # self.unique_tiles = {}
+        # subdivs = 3
+        # # Generate all unique random black and white pixels for all cells at once
+        # # Calculate section size (8x8 pixels)
+        # section_size = 1
+        # num_sections_per_tile = (self.tile_size * subdivs) // section_size
+
+        # # Generate random black/white sections for all cells
+        # # Generate random black/white sections for all cells
+        # # Each section will be either all black (0,0,0) or all white (255,255,255)
+        # section_colors = np.random.choice(
+        #     [0, 255],
+        #     size=(
+        #         self.width,
+        #         self.height,
+        #         num_sections_per_tile,
+        #         num_sections_per_tile,
+        #     ),
+        #     p=[0.2, 0.8],
+        # )
+        # # Expand to 3 channels - all channels get the same value
+        # all_tile_pixels = np.stack([section_colors] * 3, axis=-1)
+
+        # # Expand sections to full tile size
+        # expanded_tiles = np.repeat(
+        #     np.repeat(all_tile_pixels, section_size, axis=2), section_size, axis=3
+        # )
+        # # Pad by agent_view_size on each side
+        # self.pad_width = int(np.ceil(self.agent_view_size / 2))
+        # expanded_tiles = np.pad(
+        #     expanded_tiles,
+        #     (
+        #         (self.pad_width, self.pad_width),
+        #         (self.pad_width, self.pad_width),
+        #         (0, 0),
+        #         (0, 0),
+        #         (0, 0),
+        #     ),
+        #     mode="constant",
+        #     constant_values=0,
+        # )
+        # self.unique_tiles = expanded_tiles
 
     @classmethod
     def render_tile(
         cls,
+        grid: "DirectionlessGrid",
         obj: WorldObj | None,
         agent_dir: int | None = None,
         highlight: bool = False,
         tile_size: int = TILE_PIXELS,
-        subdivs: int = 3,
+        subdivs: int = TILE_SAMPLE_PIXELS // TILE_PIXELS,
+        i: int = 0,
+        j: int = 0,
+        reveal_all: bool = False,
     ) -> np.ndarray:
         """
         Render a tile and cache the result
         """
-
         # Hash map lookup key for the cache
-        key: tuple[Any, ...] = (agent_dir, highlight, tile_size)
+        key: tuple[Any, ...] = (agent_dir, highlight, tile_size, i, j, reveal_all)
         key = obj.encode() + key if obj else key
 
         if key in cls.tile_cache:
             return cls.tile_cache[key]
 
-        img = np.zeros(
-            shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
-        )
+        # img = np.zeros(
+        #     shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
+        # )
+
+        # print("shape", grid.unique_tiles.shape, i, j)
+        # if reveal_all:
+        #     import pdb
+
+        #     pdb.set_trace()
+        img = grid.unique_tiles[i, j]
 
         # Draw the grid lines (top and left edges)
-        fill_coords(img, point_in_rect(0, 0.031, 0, 1), (100, 100, 100))
-        fill_coords(img, point_in_rect(0, 1, 0, 0.031), (100, 100, 100))
+        if grid.show_grid_lines or reveal_all:
+            fill_coords(img, point_in_rect(0, 0.031, 0, 1), (100, 100, 100))
+            fill_coords(img, point_in_rect(0, 1, 0, 0.031), (100, 100, 100))
 
         if obj is not None:
             obj.render(img)
 
         # Overlay the agent on top
-        if agent_dir is not None:
+        if agent_dir is not None and reveal_all:
             tri_fn = point_in_circle(
                 0.5,
                 0.5,
@@ -207,6 +384,7 @@ class DirectionlessGrid(Grid):
         agent_pos: tuple[int, int],
         agent_dir: int | None = None,
         highlight_mask: np.ndarray | None = None,
+        reveal_all: bool = False,
     ) -> np.ndarray:
         """
         Render this grid at a given scale
@@ -231,19 +409,19 @@ class DirectionlessGrid(Grid):
                 agent_here = np.array_equal(agent_pos, (i, j))
                 assert highlight_mask is not None
 
-                if (
-                    isinstance(cell, Goal)
-                    and cell.color == "green"
-                    and self.invisible_goal
-                ):
+                if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
-                if isinstance(cell, Lava) and self.invisible_goal:
+                if isinstance(cell, Lava):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
+                    self,
                     cell,
                     agent_dir=agent_dir if agent_here else None,
                     highlight=highlight_mask[i, j],
                     tile_size=tile_size,
+                    i=i,
+                    j=j,
+                    reveal_all=reveal_all,
                 )
 
                 ymin = j * tile_size
@@ -253,6 +431,40 @@ class DirectionlessGrid(Grid):
                 img[ymin:ymax, xmin:xmax, :] = tile_img
 
         return img
+
+    def slice(self, topX: int, topY: int, width: int, height: int) -> Grid:
+        """
+        Get a subset of the grid
+        """
+        # unique_tiles = self.unique_tiles[topX : topX + width, topY : topY + height]
+        # print("unique_tiles", unique_tiles.shape, topX, topY, width, height)
+        # print("slice", topX, topY, width, height)
+
+        grid = DirectionlessGrid(
+            width,
+            height,
+            unique_tiles=self.padded_unique_tiles[
+                self.pad_width + topX : self.pad_width + topX + width,
+                self.pad_width + topY : self.pad_width + topY + height,
+            ],
+            padded_unique_tiles=self.padded_unique_tiles,
+            show_grid_lines=self.show_grid_lines,
+            pad_width=self.pad_width,
+        )
+
+        for j in range(0, height):
+            for i in range(0, width):
+                x = topX + i
+                y = topY + j
+
+                if 0 <= x < self.width and 0 <= y < self.height:
+                    v = self.get(x, y)
+                else:
+                    v = Wall()
+
+                grid.set(i, j, v)
+
+        return grid
 
 
 class ImgObsPositionWrapper(gym.ObservationWrapper):
@@ -292,7 +504,7 @@ class Actions(IntEnum):
     backward = 3
 
 
-class TMaze(MiniGridEnv):
+class SaltAndPepper(MiniGridEnv):
     """
     ## Description
 
@@ -371,22 +583,28 @@ class TMaze(MiniGridEnv):
         # self.num_crossings = num_crossings
         # self.obstacle_type = obstacle_type
         self.goal_position = None
-        self.path_episode_threshold = 2000
+        self.path_episode_threshold = 4000
         self.num_episodes = 0
 
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
-            max_steps = 2 * size**2
+            max_steps = int(1.3 * (size**2.0))
 
-        self.invisible_goal = kwargs.pop("invisible_goal", False)
+        show_grid_lines = kwargs.pop("show_grid_lines", False)
+        agent_view_size = kwargs.pop("agent_view_size", 5)
+        # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
             mission_space=mission_space,
             grid_size=size,
             see_through_walls=False,  # Set this to True for maximum speed
             max_steps=max_steps,
+            agent_pov=True,
+            agent_view_size=agent_view_size,
+            tile_size=TILE_PIXELS,
             **kwargs,
         )
+        self.show_grid_lines = show_grid_lines
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
             low=0,
@@ -406,14 +624,9 @@ class TMaze(MiniGridEnv):
                     shape=(2,),
                     dtype="int64",
                 ),
-                "arrow": gym.spaces.Box(
-                    low=-1.0,
-                    high=1.0,
-                    shape=(self.action_space.n,),
-                    dtype="float32",
-                ),
             }
         )
+        self.tile_size = TILE_PIXELS
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -423,131 +636,143 @@ class TMaze(MiniGridEnv):
     def _gen_mission():
         return "get to the green goal square"
 
+    def _gen_unique_tiles(self):
+        # subdivs = 3
+        # Generate all unique random black and white pixels for all cells at once
+        # Calculate section size (8x8 pixels)
+        # section_size = 1
+        num_sections_per_tile = TILE_SAMPLE_PIXELS
+
+        # Generate random black/white sections for all cells
+        # Generate random black/white sections for all cells
+        # Each section will be either all black (0,0,0) or all white (255,255,255)
+        section_colors = np.random.choice(
+            [0, 255],
+            size=(
+                self.width,
+                self.height,
+                num_sections_per_tile,
+                num_sections_per_tile,
+            ),
+            p=[0.2, 0.8],
+        )
+        # Expand to 3 channels - all channels get the same value
+        all_tile_pixels = np.stack([section_colors] * 3, axis=-1)
+
+        # Expand sections to full tile size
+        # expanded_tiles = np.repeat(
+        #     np.repeat(all_tile_pixels, section_size, axis=2), section_size, axis=3
+        # )
+        # Pad by agent_view_size on each side
+        pad_width = int(np.ceil(self.agent_view_size / 2))
+        expanded_tiles = np.pad(
+            all_tile_pixels,
+            (
+                (pad_width, pad_width),
+                (pad_width, pad_width),
+                (0, 0),
+                (0, 0),
+                (0, 0),
+            ),
+            mode="constant",
+            constant_values=0,
+        )
+        return all_tile_pixels, expanded_tiles, pad_width
+
     def _gen_grid(self, width, height):
         assert width % 2 == 1 and height % 2 == 1  # odd size
 
         # Create an empty grid
-        self.grid = DirectionlessGrid(width, height, invisible_goal=self.invisible_goal)
+
+        unique_tiles, padded_unique_tiles, pad_width = self._gen_unique_tiles()
+
+        self.grid = DirectionlessGrid(
+            width,
+            height,
+            show_grid_lines=self.show_grid_lines,
+            unique_tiles=unique_tiles,
+            padded_unique_tiles=padded_unique_tiles,
+            pad_width=pad_width,
+        )
 
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
-        self.grid.vert_wall(width // 2 - 1, 2, height - 3)
-        self.grid.vert_wall(width // 2 + 1, 2, height - 3)
-        self.grid.horz_wall(0, 0, width)
-        self.grid.horz_wall(0, 2, width // 2)
-        self.grid.horz_wall(width // 2 + 1, 2, width // 2)
-        # self.grid.horz_wall(0, height - 1, width)
-        # Place the agent in the top-left corner
+        # Place the agent in the bottom middle
         self.agent_pos = np.array((width // 2, height - 2))
         self.agent_dir = 3
 
-        # Either place a goal square in the top-left or top-right corner
-        goal_positions = [(1, 1), (width - 2, 1)]
-        goal_choice = self.np_random.integers(2)
-        lava_choice = 1 - goal_choice
-        self.goal_position = goal_positions[goal_choice]
-        self.lava_position = goal_positions[lava_choice]
-        # print(self.goal_position)
-        # Alternative: self.goal_position = self.np_random.choice(goal_positions, size=1)[0]
+        self.goal_position = (1, 1)
 
-        self.arrow_q_values = np.zeros(self.action_space.n)
-        self.arrow_q_values[
-            int(np.array_equal(self.goal_position, np.array((width - 2, 1))))
-        ] = 1.0
         self.put_obj(Goal(), *self.goal_position)
-        self.put_obj(Lava(), *self.lava_position)
-        # Place a green box in a random valid position
-        # while True:
-        #     box_pos = (
-        #         self.np_random.integers(1, width - 1),
-        #         self.np_random.integers(1, height - 1),
-        #     )
-        #     # Don't place box on agent start or goal positions
-        #     if (
-        #         box_pos != (1, 1)
-        #         and box_pos != (width - 2, height - 2)
-        #         and self.grid.get(*box_pos) is None
-        #     ):
-        #         green_box = Box("blue")
-        #         self.put_obj(green_box, *box_pos)
-        #         break
-
-        # # Place obstacles (lava or walls)
-        # v, h = object(), object()  # singleton `vertical` and `horizontal` objects
-
-        # # Lava rivers or walls specified by direction and position in grid
-        # rivers = [(v, i) for i in range(2, height - 2, 2)]
-        # rivers += [(h, j) for j in range(2, width - 2, 2)]
-        # self.np_random.shuffle(rivers)
-        # rivers = rivers[: self.num_crossings]  # sample random rivers
-        # rivers_v = sorted(pos for direction, pos in rivers if direction is v)
-        # rivers_h = sorted(pos for direction, pos in rivers if direction is h)
-        # obstacle_pos = itt.chain(
-        #     itt.product(range(1, width - 1), rivers_h),
-        #     itt.product(rivers_v, range(1, height - 1)),
-        # )
-        # for i, j in obstacle_pos:
-        #     self.put_obj(self.obstacle_type(), i, j)
-
-        # Sample path to goal
-        # path = [h] * len(rivers_v) + [v] * len(rivers_h)
-        # self.np_random.shuffle(path)
-
-        # Create openings
-        # limits_v = [0] + rivers_v + [height - 1]
-        # limits_h = [0] + rivers_h + [width - 1]
-        # room_i, room_j = 0, 0
-        # for direction in path:
-        #     if direction is h:
-        #         i = limits_v[room_i + 1]
-        #         j = self.np_random.choice(
-        #             range(limits_h[room_j] + 1, limits_h[room_j + 1])
-        #         )
-        #         room_i += 1
-        #     elif direction is v:
-        #         i = self.np_random.choice(
-        #             range(limits_v[room_i] + 1, limits_v[room_i + 1])
-        #         )
-        #         j = limits_h[room_j + 1]
-        #         room_j += 1
-        #     else:
-        #         assert False
-        #     self.grid.set(i, j, None)
 
         self.mission = "get to the green goal square"
+
+    def gen_obs_grid(self, agent_view_size=None):
+        """
+        Generate the sub-grid observed by the agent.
+        This method also outputs a visibility mask telling us which grid
+        cells the agent can actually see.
+        if agent_view_size is None, self.agent_view_size is used
+        """
+
+        topX, topY, botX, botY = self.get_view_exts(agent_view_size)
+
+        agent_view_size = agent_view_size or self.agent_view_size
+
+        grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
+
+        # Process occluders and visibility
+        # Note that this incurs some performance cost
+        if not self.see_through_walls:
+            vis_mask = grid.process_vis(
+                agent_pos=(agent_view_size // 2, agent_view_size - 1)
+            )
+        else:
+            vis_mask = np.ones(shape=(grid.width, grid.height), dtype=bool)
+
+        # Make it so the agent sees what it's carrying
+        # We do this by placing the carried object at the agent's position
+        # in the agent's partially observable view
+        agent_pos = grid.width // 2, grid.height - 1
+        if self.carrying:
+            grid.set(*agent_pos, self.carrying)
+        else:
+            grid.set(*agent_pos, None)
+
+        return grid, vis_mask
 
     def gen_obs(self):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        grey_box = Goal("grey")
-        left_box = (self.width * 3 // 4 - 1, self.height * 2 // 3 - 1)
-        right_box = (self.width * 3 // 4 + 1, self.height * 2 // 3 - 1)
-        up_box = (self.width * 3 // 4, self.height * 2 // 3 - 2)
-        down_box = (self.width * 3 // 4, self.height * 2 // 3)
-        box_locations = [left_box, right_box, up_box, down_box]
-        for box in box_locations:
-            self.grid.set(box[0], box[1], None)
+        # grey_box = Goal("grey")
+        # left_box = (self.width * 3 // 4 - 1, self.height * 2 // 3 - 1)
+        # right_box = (self.width * 3 // 4 + 1, self.height * 2 // 3 - 1)
+        # up_box = (self.width * 3 // 4, self.height * 2 // 3 - 2)
+        # down_box = (self.width * 3 // 4, self.height * 2 // 3)
+        # box_locations = [left_box, right_box, up_box, down_box]
+        # for box in box_locations:
+        #     self.grid.set(box[0], box[1], None)
 
-        goal_is_right = int(
-            np.array_equal(self.goal_position, np.array((self.width - 2, 1)))
-        )
+        # goal_is_right = int(
+        #     np.array_equal(self.goal_position, np.array((self.width - 2, 1)))
+        # )
         # if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
 
         # else:
         #     maybe_goal_corner = np.random.randint(0, 2)
 
-        if self.agent_pos[1] == 1:
-            w, h = right_box if goal_is_right else left_box
-        else:
-            w, h = up_box
-        if self.num_episodes > self.path_episode_threshold:
-            self.put_obj(grey_box, w, h)
-        else:
-            # Randomly decide whether to place box at selected location
-            for box in box_locations:
-                if self.np_random.random() < 0.5:
-                    self.put_obj(grey_box, box[0], box[1])
+        # if self.agent_pos[1] == 1:
+        #     w, h = right_box if goal_is_right else left_box
+        # else:
+        #     w, h = up_box
+        # if self.num_episodes > self.path_episode_threshold:
+        #     self.put_obj(grey_box, w, h)
+        # else:
+        #     # Randomly decide whether to place box at selected location
+        #     for box in box_locations:
+        #         if self.np_random.random() < 0.5:
+        #             self.put_obj(grey_box, box[0], box[1])
         grid, vis_mask = self.gen_obs_grid()
 
         # Encode the partially observable view into a numpy array
@@ -559,23 +784,22 @@ class TMaze(MiniGridEnv):
         # - a textual mission string (instructions for the agent)
 
         # print(self.agent_pos)
-        maybe_random_arrow = self.np_random.uniform(
-            low=-1.0, high=1.0, size=self.action_space.n
-        )
-        if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
-            maybe_random_arrow = self.arrow_q_values
+        # maybe_random_arrow = self.np_random.uniform(
+        #     low=-1.0, high=1.0, size=self.action_space.n
+        # )
+        # if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
+        #     maybe_random_arrow = self.arrow_q_values
 
         obs = {
             "image": image,
             "direction": self.agent_dir,
             "mission": self.mission,
             "position": self.agent_pos,
-            "arrow": maybe_random_arrow,
         }
         return obs
 
     # Customized to remove highlight mask
-    def get_full_render(self, highlight, tile_size):
+    def get_full_render(self, highlight, tile_size, reveal_all=False):
         """
         Render a non-paratial observation for visualization
         """
@@ -609,7 +833,11 @@ class TMaze(MiniGridEnv):
 
         # Render the whole grid
         img = self.grid.render(
-            tile_size, self.agent_pos, self.agent_dir, highlight_mask=None
+            tile_size,
+            self.agent_pos,
+            self.agent_dir,
+            highlight_mask=None,
+            reveal_all=reveal_all,
         )
 
         return img
@@ -694,8 +922,8 @@ class TMaze(MiniGridEnv):
 # Optimal reward would be:
 # 1 - 0.9 * (12 / 484) = 0.9776859504
 register(
-    id="MiniGrid-TMaze-v0-custom",
-    entry_point="main_dqn:TMaze",
+    id="MiniGrid-SaltAndPepper-v0-custom",
+    entry_point="main_dqn:SaltAndPepper",
     kwargs={"size": 11},
 )
 
@@ -706,9 +934,9 @@ class Args:
     """the name of this experiment"""
     seed: int = 1
     """seed of the experiment"""
-    track: bool = True
+    track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "TMaze"
+    wandb_project_name: str = "SaltAndPepper"
     """the wandb's project name"""
     wandb_entity: str = "frasermince"
     """the entity (team) of wandb's project"""
@@ -721,18 +949,18 @@ class Args:
     hf_entity: str = ""
     """the user or org name of the model repository from the Hugging Face Hub"""
     experiment_description: str = "seen-goal"
-
+    show_grid_lines: bool = False
+    agent_view_size: int = 5
     # Algorithm specific arguments
-    env_id: str = "MiniGrid-TMaze-v0-custom"
+    env_id: str = "MiniGrid-SaltAndPepper-v0-custom"
     """the id of the environment"""
     total_timesteps: int = 500000
     """total timesteps of the experiments"""
-    learning_rate: float = 5e-5
+    learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
-    invisible_goal: bool = False
     num_envs: int = 1
     """the number of parallel game environments"""
-    buffer_size: int = 10000
+    buffer_size: int = 1000000
     """the replay memory buffer size"""
     gamma: float = 0.99
     """the discount factor gamma"""
@@ -740,35 +968,46 @@ class Args:
     """the target network update rate"""
     target_network_frequency: int = 500
     """the timesteps it takes to update the target network"""
-    batch_size: int = 128
+    batch_size: int = 16
     """the batch size of sample from the reply memory"""
     start_e: float = 1
     """the starting epsilon for exploration"""
-    end_e: float = 0.05
+    end_e: float = 0.01
     """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.5
+    exploration_fraction: float = 0.10
     """the fraction of `total-timesteps` it takes from start-e to go end-e"""
     learning_starts: int = 10000
     """timestep to start learning"""
-    train_frequency: int = 10
+    train_frequency: int = 1
     """the frequency of training"""
 
 
-def make_env(env_id, seed, idx, capture_video, run_name, invisible_goal):
+def make_env(
+    env_id, seed, idx, capture_video, run_name, show_grid_lines, agent_view_size
+):
     def thunk():
         if capture_video and idx == 1:
             env = gym.make(
-                env_id, render_mode="rgb_array", invisible_goal=invisible_goal
+                env_id,
+                render_mode="rgb_array",
+                show_grid_lines=show_grid_lines,
+                agent_view_size=agent_view_size,
             )
-            env = minigrid.wrappers.RGBImgObsWrapper(env)
+            env = minigrid.wrappers.RGBImgPartialObsWrapper(env, tile_size=TILE_PIXELS)
             env = GrayscaleObservation(env)
-            env = gym.wrappers.RecordVideo(
+            env = PartialAndTotalRecordVideo(
                 env,
                 f"videos/{run_name}",
+                episode_trigger=lambda x: x % 50 == 0 or x == 1,
             )
         else:
-            env = gym.make(env_id)
-            env = minigrid.wrappers.RGBImgObsWrapper(env)
+            env = gym.make(
+                env_id,
+                render_mode="rgb_array",
+                show_grid_lines=show_grid_lines,
+                agent_view_size=agent_view_size,
+            )
+            env = minigrid.wrappers.RGBImgPartialObsWrapper(env)
             env = GrayscaleObservation(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -842,18 +1081,20 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
     # env setup
     envs = make_env(
-        args.env_id, args.seed + 1, 1, args.capture_video, run_name, args.invisible_goal
+        args.env_id,
+        args.seed + 1,
+        1,
+        args.capture_video,
+        run_name,
+        args.show_grid_lines,
+        args.agent_view_size,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
     obs, _ = envs.reset(seed=args.seed)
-    import matplotlib.pyplot as plt
 
-    plt.imshow(obs["image"], cmap="gray")
-    plt.savefig("obs_image.png")
-    plt.close()
     q_network = HeavyNet(
         # obs_shape=envs.observation_space.shape,
         action_dim=envs.action_space.n,
@@ -863,12 +1104,10 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         params=q_network.init(
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
-            jnp.expand_dims(jnp.array([obs["arrow"]]), 0),
         ),
         target_params=q_network.init(
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
-            jnp.expand_dims(jnp.array([obs["arrow"]]), 0),
         ),
         tx=optax.adam(learning_rate=args.learning_rate),
     )
@@ -890,7 +1129,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         gym.spaces.Dict(
             {
                 "image": envs.observation_space["image"],
-                "arrow": envs.observation_space["arrow"],
             }
         ),
         envs.action_space,
@@ -902,23 +1140,19 @@ poetry run pip install "stable_baselines3==2.0.0a1"
     def update(
         q_state,
         observations,
-        arrows,
         actions,
         next_observations,
-        next_arrows,
         rewards,
         dones,
     ):
         q_next_target = q_network.apply(
-            q_state.target_params, next_observations, next_arrows
+            q_state.target_params, next_observations
         )  # (batch_size, num_actions)
         q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
         next_q_value = rewards + (1 - dones) * args.gamma * q_next_target
 
         def mse_loss(params):
-            q_pred = q_network.apply(
-                params, observations, arrows
-            )  # (batch_size, num_actions)
+            q_pred = q_network.apply(params, observations)  # (batch_size, num_actions)
             q_pred = q_pred[
                 jnp.arange(q_pred.shape[0]), actions.squeeze()
             ]  # (batch_size,)
@@ -952,7 +1186,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             q_values = q_network.apply(
                 q_state.params,
                 jnp.expand_dims(jnp.array(obs["image"]), 0),
-                jnp.expand_dims(jnp.array([obs["arrow"]]), 0),
             )
             actions = q_values.argmax(axis=-1)
             actions = jax.device_get(actions)
@@ -962,7 +1195,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             # key, new_key = jax.random.split(key)
             # seed = int(jax.random.randint(new_key, (), 0, 2**30))
             # rng = np.random.default_rng(np.asarray(new_key))
-            obs, _ = envs.reset()
+            next_obs, _ = envs.reset()
             terminations = np.array([False])
             truncations = np.array([False])
         else:
@@ -971,13 +1204,27 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         terminations = np.expand_dims(terminations, axis=0)
         truncations = np.expand_dims(truncations, axis=0)
 
+        import matplotlib.pyplot as plt
+
+        plt.imshow(obs["image"], cmap="gray")
+        plt.savefig("previous_obs_image.png")
+        plt.close()
+
+        plt.imshow(next_obs["image"], cmap="gray")
+        plt.savefig("next_obs_image.png")
+        plt.close()
+
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if np.any(truncations) or np.any(terminations):
+            writer.add_scalar("epsilon", epsilon, global_step)
             writer.add_scalar(
                 "charts/episodic_return", infos["episode"]["r"], global_step
             )
             writer.add_scalar(
                 "charts/episodic_length", infos["episode"]["l"], global_step
+            )
+            writer.add_scalar(
+                "charts/episode_count", envs.unwrapped.num_episodes, global_step
             )
             # if "final_info" in infos:
             #     for info in infos["final_info"]:
@@ -1001,8 +1248,8 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         #         pdb.set_trace()
         #         real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(
-            {"image": obs["image"], "arrow": obs["arrow"]},
-            {"image": real_next_obs["image"], "arrow": real_next_obs["arrow"]},
+            {"image": obs["image"]},
+            {"image": real_next_obs["image"]},
             actions,
             rewards,
             terminations,
@@ -1019,10 +1266,8 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 loss, old_val, q_state = update(
                     q_state,
                     data.observations["image"].numpy(),
-                    data.observations["arrow"].numpy(),
                     data.actions.numpy(),
                     data.next_observations["image"].numpy(),
-                    data.next_observations["arrow"].numpy(),
                     data.rewards.flatten().numpy(),
                     data.dones.flatten().numpy(),
                 )
@@ -1032,7 +1277,12 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                         "losses/td_loss", jax.device_get(loss), global_step
                     )
                     writer.add_scalar(
-                        "losses/q_values", jax.device_get(old_val).mean(), global_step
+                        "losses/average_q_values",
+                        jax.device_get(old_val).mean(),
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "losses/max_q_value", jax.device_get(old_val).max(), global_step
                     )
                     print("SPS:", int(global_step / (time.time() - start_time)))
                     writer.add_scalar(
