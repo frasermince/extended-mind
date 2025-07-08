@@ -44,7 +44,7 @@ from typing import Any, SupportsFloat
 
 
 TILE_SAMPLE_PIXELS = 64
-TILE_PIXELS = 32
+TILE_PIXELS = 8
 
 
 class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
@@ -71,6 +71,15 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
             self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
         )
         img_partial = self.env.unwrapped.get_pov_render(self.env.unwrapped.tile_size)
+
+        # INSERT_YOUR_CODE
+        # 8x the size of img_total and img_partial using nearest neighbor upsampling
+        def upsample(img, scale):
+            h, w, c = img.shape
+            return np.repeat(np.repeat(img, scale, axis=0), scale, axis=1)
+
+        img_total = upsample(img_total, 8)
+        img_partial = upsample(img_partial, 8)
         # Stack img_total and img_partial vertically with a padding in between
 
         # Ensure both images have the same width; if not, pad the smaller one
@@ -125,28 +134,6 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
             return tmp_history + render_out
         else:
             return render_out
-
-    # def _capture_frame(self):
-    #     assert self.recording, "Cannot capture a frame, recording wasn't started."
-
-    #     frame_total, frame_partial = self.env.unwrapped.render_for_record()
-    #     import pdb
-
-    #     pdb.set_trace()
-
-    #     if isinstance(frame, list):
-    #         if len(frame) == 0:  # render was called
-    #             return
-    #         self.render_history += frame
-    #         frame = frame[-1]
-
-    #     if isinstance(frame, np.ndarray):
-    #         self.recorded_frames.append(frame)
-    #     else:
-    #         self.stop_recording()
-    #         logger.warn(
-    #             f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
-    #         )
 
 
 class GrayscaleObservation(
@@ -335,16 +322,7 @@ class DirectionlessGrid(Grid):
         if key in cls.tile_cache:
             return cls.tile_cache[key]
 
-        # img = np.zeros(
-        #     shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
-        # )
-
-        # print("shape", grid.unique_tiles.shape, i, j)
-        # if reveal_all:
-        #     import pdb
-
-        #     pdb.set_trace()
-        img = grid.unique_tiles[i, j]
+        img = grid.unique_tiles[i, j].copy()
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
@@ -367,8 +345,8 @@ class DirectionlessGrid(Grid):
             fill_coords(img, tri_fn, (255, 0, 0))
 
         # Highlight the cell if needed
-        if highlight:
-            highlight_img(img)
+        # if highlight:
+        #     highlight_img(img)
 
         # Downsample the image to perform supersampling/anti-aliasing
         img = downsample(img, subdivs)
@@ -411,6 +389,8 @@ class DirectionlessGrid(Grid):
 
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
+                if isinstance(cell, Wall):
+                    cell = None
                 if isinstance(cell, Lava):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
@@ -440,13 +420,17 @@ class DirectionlessGrid(Grid):
         # print("unique_tiles", unique_tiles.shape, topX, topY, width, height)
         # print("slice", topX, topY, width, height)
 
+        relevant_unique = self.padded_unique_tiles[
+            self.pad_width + topX : self.pad_width + topX + width,
+            self.pad_width + topY : self.pad_width + topY + height,
+            :,
+            :,
+        ]
+
         grid = DirectionlessGrid(
             width,
             height,
-            unique_tiles=self.padded_unique_tiles[
-                self.pad_width + topX : self.pad_width + topX + width,
-                self.pad_width + topY : self.pad_width + topY + height,
-            ],
+            unique_tiles=relevant_unique,
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
             pad_width=self.pad_width,
@@ -627,6 +611,10 @@ class SaltAndPepper(MiniGridEnv):
             }
         )
         self.tile_size = TILE_PIXELS
+        self.size = size
+        self.unique_tiles, self.padded_unique_tiles, self.pad_width = (
+            self._gen_unique_tiles()
+        )
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -649,8 +637,8 @@ class SaltAndPepper(MiniGridEnv):
         section_colors = np.random.choice(
             [0, 255],
             size=(
-                self.width,
-                self.height,
+                self.size - 2,
+                self.size - 2,
                 num_sections_per_tile,
                 num_sections_per_tile,
             ),
@@ -677,6 +665,13 @@ class SaltAndPepper(MiniGridEnv):
             mode="constant",
             constant_values=0,
         )
+
+        all_tile_pixels = np.pad(
+            all_tile_pixels,
+            ((1, 1), (1, 1), (0, 0), (0, 0), (0, 0)),
+            mode="constant",
+            constant_values=0,
+        )
         return all_tile_pixels, expanded_tiles, pad_width
 
     def _gen_grid(self, width, height):
@@ -684,15 +679,13 @@ class SaltAndPepper(MiniGridEnv):
 
         # Create an empty grid
 
-        unique_tiles, padded_unique_tiles, pad_width = self._gen_unique_tiles()
-
         self.grid = DirectionlessGrid(
             width,
             height,
             show_grid_lines=self.show_grid_lines,
-            unique_tiles=unique_tiles,
-            padded_unique_tiles=padded_unique_tiles,
-            pad_width=pad_width,
+            unique_tiles=self.unique_tiles,
+            padded_unique_tiles=self.padded_unique_tiles,
+            pad_width=self.pad_width,
         )
 
         # Generate the surrounding walls
@@ -706,6 +699,25 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
+
+    def get_view_exts(self, agent_view_size=None):
+        """
+        Get the extents of the square set of tiles visible to the agent
+        Note: the bottom extent indices are not included in the set
+        if agent_view_size is None, use self.agent_view_size
+        """
+
+        agent_view_size = agent_view_size or self.agent_view_size
+
+        assert self.agent_dir == 3
+
+        topX = self.agent_pos[0] - agent_view_size // 2 - 1
+        topY = self.agent_pos[1] - agent_view_size // 2 - 1
+
+        botX = topX + agent_view_size
+        botY = topY + agent_view_size
+
+        return topX, topY, botX, botY
 
     def gen_obs_grid(self, agent_view_size=None):
         """
@@ -994,12 +1006,12 @@ def make_env(
                 agent_view_size=agent_view_size,
             )
             env = minigrid.wrappers.RGBImgPartialObsWrapper(env, tile_size=TILE_PIXELS)
-            env = GrayscaleObservation(env)
             env = PartialAndTotalRecordVideo(
                 env,
                 f"videos/{run_name}",
                 episode_trigger=lambda x: x % 50 == 0 or x == 1,
             )
+            env = GrayscaleObservation(env)
         else:
             env = gym.make(
                 env_id,
@@ -1241,12 +1253,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
-        # for idx, trunc in enumerate(truncations):
-        #     if trunc:
-        #         import pdb
 
-        #         pdb.set_trace()
-        #         real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(
             {"image": obs["image"]},
             {"image": real_next_obs["image"]},
