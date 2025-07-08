@@ -38,9 +38,9 @@ from minigrid.wrappers import ImgObsWrapper
 from stable_baselines3.common.buffers import DictReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
-from networks_jax import CheapNet, GatedDQN, HeavyNet
+from networks_jax import Network
 
-from typing import Any, Iterable, SupportsFloat, TypeVar
+from typing import Any, SupportsFloat
 
 
 TILE_SAMPLE_PIXELS = 64
@@ -1095,7 +1095,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
 
     obs, _ = envs.reset(seed=args.seed)
 
-    q_network = HeavyNet(
+    q_network = Network(
         # obs_shape=envs.observation_space.shape,
         action_dim=envs.action_space.n,
     )
