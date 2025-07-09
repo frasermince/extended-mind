@@ -316,7 +316,13 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
         # Hash map lookup key for the cache
-        key: tuple[Any, ...] = (agent_dir, highlight, tile_size, i, j, reveal_all)
+        key: tuple[Any, ...] = (
+            agent_dir,
+            highlight,
+            tile_size,
+            tuple(grid.unique_tiles[i, j].flatten()),
+            reveal_all,
+        )
         key = obj.encode() + key if obj else key
 
         if key in cls.tile_cache:
@@ -992,6 +998,8 @@ class Args:
     """timestep to start learning"""
     train_frequency: int = 1
     """the frequency of training"""
+    eval: bool = False
+    train: bool = True
 
 
 def make_env(
@@ -1028,20 +1036,6 @@ def make_env(
         return env
 
     return thunk
-
-
-# ALGO LOGIC: initialize agent here:
-class QNetwork(nn.Module):
-    action_dim: int
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray):
-        x = nn.Dense(120)(x)
-        x = nn.relu(x)
-        x = nn.Dense(84)(x)
-        x = nn.relu(x)
-        x = nn.Dense(self.action_dim)(x)
-        return x
 
 
 class TrainState(TrainState):
@@ -1176,168 +1170,229 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         q_state = q_state.apply_gradients(grads=grads)
         return loss_value, q_pred, q_state
 
-    start_time = time.time()
+    def eval_env():
+        print("****Evaluating****")
+        obs, _ = envs.reset(seed=args.seed)
+        terminations = np.array([False])
+        truncations = np.array([False])
+        seed = args.seed
 
-    # TRY NOT TO MODIFY: start the game
-    obs, _ = envs.reset(seed=args.seed)
+        hardcoded_actions = [
+            envs.unwrapped.actions.left,
+            envs.unwrapped.actions.forward,
+        ]
+        action_index = 0
+        for global_step in tqdm(range(args.total_timesteps)):
+            # ALGO LOGIC: put action logic here
 
-    terminations = np.array([False])
-    truncations = np.array([False])
-    seed = args.seed
-    for global_step in tqdm(range(args.total_timesteps)):
-        # ALGO LOGIC: put action logic here
-        epsilon = linear_schedule(
-            args.start_e,
-            args.end_e,
-            args.exploration_fraction * args.total_timesteps,
-            global_step,
-        )
-        if random.random() < epsilon:
-            actions = np.array([envs.action_space.sample() for _ in range(1)])
-        else:
-            q_values = q_network.apply(
-                q_state.params,
-                jnp.expand_dims(jnp.array(obs["image"]), 0),
+            actions = jnp.array([hardcoded_actions[action_index]])
+            action_index += 1
+            action_index %= len(hardcoded_actions)
+
+            # TRY NOT TO MODIFY: execute the game and log data.
+            if terminations or truncations:
+                # key, new_key = jax.random.split(key)
+                # seed = int(jax.random.randint(new_key, (), 0, 2**30))
+                # rng = np.random.default_rng(np.asarray(new_key))
+                next_obs, _ = envs.reset()
+                terminations = np.array([False])
+                truncations = np.array([False])
+            else:
+
+                next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            # next_obs = np.expand_dims(obs["image"], axis=0)
+            terminations = np.expand_dims(terminations, axis=0)
+            truncations = np.expand_dims(truncations, axis=0)
+
+            import matplotlib.pyplot as plt
+
+            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("previous_obs_image.png")
+            plt.close()
+
+            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("next_obs_image.png")
+            plt.close()
+
+    def train_env():
+        start_time = time.time()
+
+        # TRY NOT TO MODIFY: start the game
+        obs, _ = envs.reset(seed=args.seed)
+
+        terminations = np.array([False])
+        truncations = np.array([False])
+        seed = args.seed
+
+        for global_step in tqdm(range(args.total_timesteps)):
+            # ALGO LOGIC: put action logic here
+            epsilon = linear_schedule(
+                args.start_e,
+                args.end_e,
+                args.exploration_fraction * args.total_timesteps,
+                global_step,
             )
-            actions = q_values.argmax(axis=-1)
-            actions = jax.device_get(actions)
 
-        # TRY NOT TO MODIFY: execute the game and log data.
-        if terminations or truncations:
-            # key, new_key = jax.random.split(key)
-            # seed = int(jax.random.randint(new_key, (), 0, 2**30))
-            # rng = np.random.default_rng(np.asarray(new_key))
-            next_obs, _ = envs.reset()
-            terminations = np.array([False])
-            truncations = np.array([False])
-        else:
-            next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        # next_obs = np.expand_dims(obs["image"], axis=0)
-        terminations = np.expand_dims(terminations, axis=0)
-        truncations = np.expand_dims(truncations, axis=0)
+            if random.random() < epsilon:
+                actions = np.array([envs.action_space.sample() for _ in range(1)])
+            else:
+                q_values = q_network.apply(
+                    q_state.params,
+                    jnp.expand_dims(jnp.array(obs["image"]), 0),
+                )
+                actions = q_values.argmax(axis=-1)
+                actions = jax.device_get(actions)
+            # import pdb
 
-        import matplotlib.pyplot as plt
+            # pdb.set_trace()
 
-        plt.imshow(obs["image"], cmap="gray")
-        plt.savefig("previous_obs_image.png")
-        plt.close()
+            # TRY NOT TO MODIFY: execute the game and log data.
+            # TODO: Check if this adds an off by one error
+            if terminations or truncations:
+                # key, new_key = jax.random.split(key)
+                # seed = int(jax.random.randint(new_key, (), 0, 2**30))
+                # rng = np.random.default_rng(np.asarray(new_key))
+                next_obs, _ = envs.reset()
+                terminations = np.array([False])
+                truncations = np.array([False])
+            else:
 
-        plt.imshow(next_obs["image"], cmap="gray")
-        plt.savefig("next_obs_image.png")
-        plt.close()
+                next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            # next_obs = np.expand_dims(obs["image"], axis=0)
+            terminations = np.expand_dims(terminations, axis=0)
+            truncations = np.expand_dims(truncations, axis=0)
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
-        if np.any(truncations) or np.any(terminations):
-            writer.add_scalar("epsilon", epsilon, global_step)
-            writer.add_scalar(
-                "charts/episodic_return", infos["episode"]["r"], global_step
+            import matplotlib.pyplot as plt
+
+            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("previous_obs_image.png")
+            plt.close()
+
+            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("next_obs_image.png")
+            plt.close()
+
+            # TRY NOT TO MODIFY: record rewards for plotting purposes
+            if np.any(truncations) or np.any(terminations):
+                writer.add_scalar("epsilon", epsilon, global_step)
+                writer.add_scalar(
+                    "charts/episodic_return", infos["episode"]["r"], global_step
+                )
+                writer.add_scalar(
+                    "charts/episodic_length", infos["episode"]["l"], global_step
+                )
+                writer.add_scalar(
+                    "charts/episode_count", envs.unwrapped.num_episodes, global_step
+                )
+                # if "final_info" in infos:
+                #     for info in infos["final_info"]:
+                #         if info and "episode" in info:
+                #         print(
+                #             f"global_step={global_step}, episodic_return={info['episode']['r']}"
+                #         )
+                #         writer.add_scalar(
+                #             "charts/episodic_return", info["episode"]["r"], global_step
+                #         )
+                #         writer.add_scalar(
+                #             "charts/episodic_length", info["episode"]["l"], global_step
+                #         )
+
+            # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
+            real_next_obs = next_obs.copy()
+
+            rb.add(
+                {"image": obs["image"]},
+                {"image": real_next_obs["image"]},
+                actions,
+                rewards,
+                terminations,
+                infos,
             )
-            writer.add_scalar(
-                "charts/episodic_length", infos["episode"]["l"], global_step
+            # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+            obs = next_obs
+
+            # ALGO LOGIC: training.
+            if global_step > args.learning_starts:
+                if global_step % args.train_frequency == 0:
+                    data = rb.sample(args.batch_size)
+                    # perform a gradient-descent step
+                    loss, old_val, q_state = update(
+                        q_state,
+                        data.observations["image"].numpy(),
+                        data.actions.numpy(),
+                        data.next_observations["image"].numpy(),
+                        data.rewards.flatten().numpy(),
+                        data.dones.flatten().numpy(),
+                    )
+
+                    if global_step % 100 == 0:
+                        writer.add_scalar(
+                            "losses/td_loss", jax.device_get(loss), global_step
+                        )
+                        writer.add_scalar(
+                            "losses/average_q_values",
+                            jax.device_get(old_val).mean(),
+                            global_step,
+                        )
+                        writer.add_scalar(
+                            "losses/max_q_value",
+                            jax.device_get(old_val).max(),
+                            global_step,
+                        )
+                        print("SPS:", int(global_step / (time.time() - start_time)))
+                        writer.add_scalar(
+                            "charts/SPS",
+                            int(global_step / (time.time() - start_time)),
+                            global_step,
+                        )
+
+                # update target network
+                if global_step % args.target_network_frequency == 0:
+                    q_state = q_state.replace(
+                        target_params=optax.incremental_update(
+                            q_state.params, q_state.target_params, args.tau
+                        )
+                    )
+
+        if args.save_model:
+            model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+            with open(model_path, "wb") as f:
+                f.write(flax.serialization.to_bytes(q_state.params))
+            print(f"model saved to {model_path}")
+            from cleanrl_utils.evals.dqn_jax_eval import evaluate
+
+            episodic_returns = evaluate(
+                model_path,
+                make_env,
+                args.env_id,
+                eval_episodes=10,
+                run_name=f"{run_name}-eval",
+                Model=QNetwork,
+                epsilon=0.05,
             )
-            writer.add_scalar(
-                "charts/episode_count", envs.unwrapped.num_episodes, global_step
-            )
-            # if "final_info" in infos:
-            #     for info in infos["final_info"]:
-            #         if info and "episode" in info:
-            #         print(
-            #             f"global_step={global_step}, episodic_return={info['episode']['r']}"
-            #         )
-            #         writer.add_scalar(
-            #             "charts/episodic_return", info["episode"]["r"], global_step
-            #         )
-            #         writer.add_scalar(
-            #             "charts/episodic_length", info["episode"]["l"], global_step
-            #         )
+            for idx, episodic_return in enumerate(episodic_returns):
+                writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
-        # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
-        real_next_obs = next_obs.copy()
+            if args.upload_model:
+                from cleanrl_utils.huggingface import push_to_hub
 
-        rb.add(
-            {"image": obs["image"]},
-            {"image": real_next_obs["image"]},
-            actions,
-            rewards,
-            terminations,
-            infos,
-        )
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
-
-        # ALGO LOGIC: training.
-        if global_step > args.learning_starts:
-            if global_step % args.train_frequency == 0:
-                data = rb.sample(args.batch_size)
-                # perform a gradient-descent step
-                loss, old_val, q_state = update(
-                    q_state,
-                    data.observations["image"].numpy(),
-                    data.actions.numpy(),
-                    data.next_observations["image"].numpy(),
-                    data.rewards.flatten().numpy(),
-                    data.dones.flatten().numpy(),
+                repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
+                repo_id = (
+                    f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
+                )
+                push_to_hub(
+                    args,
+                    episodic_returns,
+                    repo_id,
+                    "DQN",
+                    f"runs/{run_name}",
+                    f"videos/{run_name}-eval",
                 )
 
-                if global_step % 100 == 0:
-                    writer.add_scalar(
-                        "losses/td_loss", jax.device_get(loss), global_step
-                    )
-                    writer.add_scalar(
-                        "losses/average_q_values",
-                        jax.device_get(old_val).mean(),
-                        global_step,
-                    )
-                    writer.add_scalar(
-                        "losses/max_q_value", jax.device_get(old_val).max(), global_step
-                    )
-                    print("SPS:", int(global_step / (time.time() - start_time)))
-                    writer.add_scalar(
-                        "charts/SPS",
-                        int(global_step / (time.time() - start_time)),
-                        global_step,
-                    )
-
-            # update target network
-            if global_step % args.target_network_frequency == 0:
-                q_state = q_state.replace(
-                    target_params=optax.incremental_update(
-                        q_state.params, q_state.target_params, args.tau
-                    )
-                )
-
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        with open(model_path, "wb") as f:
-            f.write(flax.serialization.to_bytes(q_state.params))
-        print(f"model saved to {model_path}")
-        from cleanrl_utils.evals.dqn_jax_eval import evaluate
-
-        episodic_returns = evaluate(
-            model_path,
-            make_env,
-            args.env_id,
-            eval_episodes=10,
-            run_name=f"{run_name}-eval",
-            Model=QNetwork,
-            epsilon=0.05,
-        )
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
-
-        if args.upload_model:
-            from cleanrl_utils.huggingface import push_to_hub
-
-            repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
-            repo_id = f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
-            push_to_hub(
-                args,
-                episodic_returns,
-                repo_id,
-                "DQN",
-                f"runs/{run_name}",
-                f"videos/{run_name}-eval",
-            )
+    if args.eval:
+        eval_env()
+    else:
+        train_env()
 
     envs.close()
     writer.close()
