@@ -231,6 +231,8 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             plt.close()
 
     def train_env():
+        print("Default JAX device:", jax.devices()[0])
+        print("All available devices:", jax.devices())
 
         start_time = time.time()
 
@@ -292,7 +294,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             rewards,
             dones,
         ):
-            print("device", next_observations.device)
             q_next_target = q_network.apply(
                 q_state.target_params, next_observations
             )  # (batch_size, num_actions)
@@ -403,6 +404,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 if global_step % args.train_frequency == 0:
                     data = rb.sample(args.batch_size)
                     # perform a gradient-descent step
+
                     loss, old_val, q_state = update(
                         q_state,
                         data.observations["image"].numpy(),
