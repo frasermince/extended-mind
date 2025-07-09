@@ -515,7 +515,7 @@ class SaltAndPepper(MiniGridEnv):
 
     ## Rewards
 
-    A reward of '1 - 0.9 * (step_count / max_steps)' is given for success, and '0' for failure.
+    A reward of '1.0' is given for success, and '0' for failure.
 
     ## Termination
 
@@ -606,6 +606,9 @@ class SaltAndPepper(MiniGridEnv):
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
         return super().reset(seed=seed, options=options)
+
+    def _reward(self) -> float:
+        return 1.0
 
     @staticmethod
     def _gen_mission():
