@@ -22,15 +22,30 @@ class Network(nn.Module):
     def __call__(self, x):
         x = x / 255.0
         x = jnp.expand_dims(x, axis=-1)
-        # x = jnp.transpose(x, (0, 3, 1, 2))
-        x = nn.Conv(32, kernel_size=(8, 8), strides=(4, 4), padding="SAME")(x)
+
+        # First conv - learn features at full resolution
+        x = nn.Conv(32, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
+            x
+        )  # 40×40→40×40
         x = nn.relu(x)
-        x = nn.Conv(64, kernel_size=(4, 4), strides=(2, 2), padding="SAME")(x)
+
+        # Second conv - learn more complex features
+        x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
+            x
+        )  # 40×40→40×40
         x = nn.relu(x)
-        x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(x)
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 40×40→20×20
+
+        # Third conv - learn features at reduced resolution
+        x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
+            x
+        )  # 20×20→20×20
         x = nn.relu(x)
+        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 20×20→10×10
+
         x = x.reshape((x.shape[0], -1))
-        x = nn.Dense(512)(x)
+
+        x = nn.Dense(256)(x)
         x = nn.relu(x)
         x = nn.Dense(self.action_dim)(x)
         return x
