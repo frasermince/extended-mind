@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "hidden-llava"
+name = "extended-mind"
 version = "0.1.0"
 description = ""
 authors = ["Fraser Mince <frasermince@gmail.com>"]
