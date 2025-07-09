@@ -309,7 +309,12 @@ class DirectionlessGrid(Grid):
         if key in cls.tile_cache:
             return cls.tile_cache[key]
 
-        img = grid.unique_tiles[i, j].copy()
+        if obj == Wall and reveal_all:
+            img = np.zeros(
+                shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
+            )
+        else:
+            img = grid.unique_tiles[i, j].copy()
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
@@ -376,7 +381,7 @@ class DirectionlessGrid(Grid):
 
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
-                if isinstance(cell, Wall):
+                if isinstance(cell, Wall) and not reveal_all:
                     cell = None
                 if isinstance(cell, Lava):
                     cell = None
@@ -624,45 +629,31 @@ class SaltAndPepper(MiniGridEnv):
         # Generate random black/white sections for all cells
         # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
+        pad_width = int(np.ceil(self.agent_view_size / 2))
         section_colors = np.random.choice(
             [0, 255],
             size=(
-                self.size - 2,
-                self.size - 2,
+                self.size + pad_width * 2,
+                self.size + pad_width * 2,
                 num_sections_per_tile,
                 num_sections_per_tile,
             ),
             p=[0.2, 0.8],
         )
         # Expand to 3 channels - all channels get the same value
-        all_tile_pixels = np.stack([section_colors] * 3, axis=-1)
+        padded_tiles = np.stack([section_colors] * 3, axis=-1)
 
         # Expand sections to full tile size
         # expanded_tiles = np.repeat(
         #     np.repeat(all_tile_pixels, section_size, axis=2), section_size, axis=3
         # )
         # Pad by agent_view_size on each side
-        pad_width = int(np.ceil(self.agent_view_size / 2))
-        expanded_tiles = np.pad(
-            all_tile_pixels,
-            (
-                (pad_width, pad_width),
-                (pad_width, pad_width),
-                (0, 0),
-                (0, 0),
-                (0, 0),
-            ),
-            mode="constant",
-            constant_values=0,
-        )
 
-        all_tile_pixels = np.pad(
-            all_tile_pixels,
-            ((1, 1), (1, 1), (0, 0), (0, 0), (0, 0)),
-            mode="constant",
-            constant_values=0,
+        return (
+            padded_tiles[pad_width:-pad_width, pad_width:-pad_width, :, :],
+            padded_tiles,
+            pad_width,
         )
-        return all_tile_pixels, expanded_tiles, pad_width
 
     def _gen_grid(self, width, height):
         assert width % 2 == 1 and height % 2 == 1  # odd size
