@@ -102,7 +102,6 @@ def make_env(
             env = PartialAndTotalRecordVideo(
                 env,
                 f"videos/{run_name}",
-                episode_trigger=lambda x: x % 50 == 0 or x == 1,
             )
             env = GrayscaleObservation(env)
         else:
