@@ -240,6 +240,79 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         terminations = np.array([False])
         truncations = np.array([False])
         seed = args.seed
+        q_network = Network(
+            # obs_shape=envs.observation_space.shape,
+            action_dim=envs.action_space.n,
+        )
+        q_state = TrainState.create(
+            apply_fn=q_network.apply,
+            params=q_network.init(
+                q_key,
+                jnp.expand_dims(jnp.array(obs["image"]), 0),
+            ),
+            target_params=q_network.init(
+                q_key,
+                jnp.expand_dims(jnp.array(obs["image"]), 0),
+            ),
+            tx=optax.adam(learning_rate=args.learning_rate),
+        )
+        print(
+            "params",
+            sum(x.size for x in jax.tree.leaves(q_state.params)),
+            "target_params",
+            sum(x.size for x in jax.tree.leaves(q_state.target_params)),
+        )
+
+        q_network.apply = jax.jit(q_network.apply)
+        # This step is not necessary as init called on same observation and key will always lead to same initializations
+        q_state = q_state.replace(
+            target_params=optax.incremental_update(
+                q_state.params, q_state.target_params, 1
+            )
+        )
+
+        rb = DictReplayBuffer(
+            args.buffer_size,
+            gym.spaces.Dict(
+                {
+                    "image": envs.observation_space["image"],
+                }
+            ),
+            envs.action_space,
+            "cpu",
+            handle_timeout_termination=False,
+        )
+
+        @jax.jit
+        def update(
+            q_state,
+            observations,
+            actions,
+            next_observations,
+            rewards,
+            dones,
+        ):
+            print("device", next_observations.device)
+            q_next_target = q_network.apply(
+                q_state.target_params, next_observations
+            )  # (batch_size, num_actions)
+            q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
+            next_q_value = rewards + (1 - dones) * args.gamma * q_next_target
+
+            def mse_loss(params):
+                q_pred = q_network.apply(
+                    params, observations
+                )  # (batch_size, num_actions)
+                q_pred = q_pred[
+                    jnp.arange(q_pred.shape[0]), actions.squeeze()
+                ]  # (batch_size,)
+                return ((q_pred - next_q_value) ** 2).mean(), q_pred
+
+            (loss_value, q_pred), grads = jax.value_and_grad(mse_loss, has_aux=True)(
+                q_state.params
+            )
+            q_state = q_state.apply_gradients(grads=grads)
+            return loss_value, q_pred, q_state
 
         for global_step in tqdm(range(args.total_timesteps)):
             # ALGO LOGIC: put action logic here
@@ -259,9 +332,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
                 )
                 actions = q_values.argmax(axis=-1)
                 actions = jax.device_get(actions)
-            # import pdb
-
-            # pdb.set_trace()
 
             # TRY NOT TO MODIFY: execute the game and log data.
             # TODO: Check if this adds an off by one error
@@ -279,88 +349,15 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            import matplotlib.pyplot as plt
+            # import matplotlib.pyplot as plt
 
-            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("previous_obs_image.png")
-            plt.close()
+            # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("previous_obs_image.png")
+            # plt.close()
 
-            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("next_obs_image.png")
-            plt.close()
-
-            q_network = Network(
-                # obs_shape=envs.observation_space.shape,
-                action_dim=envs.action_space.n,
-            )
-            q_state = TrainState.create(
-                apply_fn=q_network.apply,
-                params=q_network.init(
-                    q_key,
-                    jnp.expand_dims(jnp.array(obs["image"]), 0),
-                ),
-                target_params=q_network.init(
-                    q_key,
-                    jnp.expand_dims(jnp.array(obs["image"]), 0),
-                ),
-                tx=optax.adam(learning_rate=args.learning_rate),
-            )
-            print(
-                "params",
-                sum(x.size for x in jax.tree.leaves(q_state.params)),
-                "target_params",
-                sum(x.size for x in jax.tree.leaves(q_state.target_params)),
-            )
-
-            q_network.apply = jax.jit(q_network.apply)
-            # This step is not necessary as init called on same observation and key will always lead to same initializations
-            q_state = q_state.replace(
-                target_params=optax.incremental_update(
-                    q_state.params, q_state.target_params, 1
-                )
-            )
-
-            rb = DictReplayBuffer(
-                args.buffer_size,
-                gym.spaces.Dict(
-                    {
-                        "image": envs.observation_space["image"],
-                    }
-                ),
-                envs.action_space,
-                "cpu",
-                handle_timeout_termination=False,
-            )
-
-            @jax.jit
-            def update(
-                q_state,
-                observations,
-                actions,
-                next_observations,
-                rewards,
-                dones,
-            ):
-                q_next_target = q_network.apply(
-                    q_state.target_params, next_observations
-                )  # (batch_size, num_actions)
-                q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
-                next_q_value = rewards + (1 - dones) * args.gamma * q_next_target
-
-                def mse_loss(params):
-                    q_pred = q_network.apply(
-                        params, observations
-                    )  # (batch_size, num_actions)
-                    q_pred = q_pred[
-                        jnp.arange(q_pred.shape[0]), actions.squeeze()
-                    ]  # (batch_size,)
-                    return ((q_pred - next_q_value) ** 2).mean(), q_pred
-
-                (loss_value, q_pred), grads = jax.value_and_grad(
-                    mse_loss, has_aux=True
-                )(q_state.params)
-                q_state = q_state.apply_gradients(grads=grads)
-                return loss_value, q_pred, q_state
+            # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("next_obs_image.png")
+            # plt.close()
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             if np.any(truncations) or np.any(terminations):
