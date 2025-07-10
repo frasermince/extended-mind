@@ -569,7 +569,7 @@ class SaltAndPepper(MiniGridEnv):
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
-            max_steps = int(1.3 * (size**2.0))
+            max_steps = int(size**2.0)
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)

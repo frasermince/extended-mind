@@ -58,7 +58,7 @@ class Args:
     # Algorithm specific arguments
     env_id: str = "MiniGrid-SaltAndPepper-v0-custom"
     """the id of the environment"""
-    total_timesteps: int = 500000
+    total_timesteps: int = 50000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
