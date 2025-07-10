@@ -53,6 +53,7 @@ class Args:
     """the user or org name of the model repository from the Hugging Face Hub"""
     experiment_description: str = "seen-goal"
     show_grid_lines: bool = False
+    show_walls_pov: bool = False
     agent_view_size: int = 5
     # Algorithm specific arguments
     env_id: str = "MiniGrid-SaltAndPepper-v0-custom"
@@ -88,7 +89,14 @@ class Args:
 
 
 def make_env(
-    env_id, seed, idx, capture_video, run_name, show_grid_lines, agent_view_size
+    env_id,
+    seed,
+    idx,
+    capture_video,
+    run_name,
+    show_grid_lines,
+    agent_view_size,
+    show_walls_pov,
 ):
     def thunk():
         if capture_video and idx == 1:
@@ -97,6 +105,7 @@ def make_env(
                 render_mode="rgb_array",
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
+                show_walls_pov=show_walls_pov,
             )
             env = minigrid.wrappers.RGBImgPartialObsWrapper(env, tile_size=TILE_PIXELS)
             env = PartialAndTotalRecordVideo(
@@ -110,6 +119,7 @@ def make_env(
                 render_mode="rgb_array",
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
+                show_walls_pov=show_walls_pov,
             )
             env = minigrid.wrappers.RGBImgPartialObsWrapper(env)
             env = GrayscaleObservation(env)
@@ -178,6 +188,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         run_name,
         args.show_grid_lines,
         args.agent_view_size,
+        args.show_walls_pov,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
@@ -349,15 +360,15 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            # import matplotlib.pyplot as plt
+            import matplotlib.pyplot as plt
 
-            # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-            # plt.savefig("previous_obs_image.png")
-            # plt.close()
+            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("previous_obs_image.png")
+            plt.close()
 
-            # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-            # plt.savefig("next_obs_image.png")
-            # plt.close()
+            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("next_obs_image.png")
+            plt.close()
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             if np.any(truncations) or np.any(terminations):

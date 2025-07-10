@@ -221,9 +221,9 @@ class DirectionlessGrid(Grid):
         # self.tile_size = kwargs.pop("tile_size", TILE_PIXELS)
         self.unique_tiles = kwargs.pop("unique_tiles", None)
         self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
-        show_grid_lines = kwargs.pop("show_grid_lines", False)
+        self.show_grid_lines = kwargs.pop("show_grid_lines", False)
+        self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.show_grid_lines = show_grid_lines
         super().__init__(*args, **kwargs)
 
         # if self.unique_tiles is None:
@@ -301,6 +301,7 @@ class DirectionlessGrid(Grid):
             agent_dir,
             highlight,
             tile_size,
+            obj,
             tuple(grid.unique_tiles[i, j].flatten()),
             reveal_all,
         )
@@ -309,7 +310,7 @@ class DirectionlessGrid(Grid):
         if key in cls.tile_cache:
             return cls.tile_cache[key]
 
-        if obj == Wall and reveal_all:
+        if isinstance(obj, Wall):
             img = np.zeros(
                 shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
             )
@@ -381,9 +382,11 @@ class DirectionlessGrid(Grid):
 
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
-                if isinstance(cell, Wall) and not reveal_all:
-                    cell = None
-                if isinstance(cell, Lava):
+                if (
+                    isinstance(cell, Wall)
+                    and not reveal_all
+                    and not self.show_walls_pov
+                ):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
                     self,
@@ -425,6 +428,7 @@ class DirectionlessGrid(Grid):
             unique_tiles=relevant_unique,
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
+            show_walls_pov=self.show_walls_pov,
             pad_width=self.pad_width,
         )
 
@@ -568,12 +572,13 @@ class SaltAndPepper(MiniGridEnv):
             max_steps = int(1.3 * (size**2.0))
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
+        show_walls_pov = kwargs.pop("show_walls_pov", False)
         agent_view_size = kwargs.pop("agent_view_size", 5)
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
             mission_space=mission_space,
             grid_size=size,
-            see_through_walls=False,  # Set this to True for maximum speed
+            see_through_walls=True,  # Set this to True for maximum speed
             max_steps=max_steps,
             agent_pov=True,
             agent_view_size=agent_view_size,
@@ -581,6 +586,7 @@ class SaltAndPepper(MiniGridEnv):
             **kwargs,
         )
         self.show_grid_lines = show_grid_lines
+        self.show_walls_pov = show_walls_pov
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
             low=0,
@@ -664,6 +670,7 @@ class SaltAndPepper(MiniGridEnv):
             width,
             height,
             show_grid_lines=self.show_grid_lines,
+            show_walls_pov=self.show_walls_pov,
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
@@ -692,13 +699,29 @@ class SaltAndPepper(MiniGridEnv):
 
         assert self.agent_dir == 3
 
-        topX = self.agent_pos[0] - agent_view_size // 2 - 1
-        topY = self.agent_pos[1] - agent_view_size // 2 - 1
+        topX = self.agent_pos[0] - agent_view_size // 2
+        topY = self.agent_pos[1] - agent_view_size // 2
 
         botX = topX + agent_view_size
         botY = topY + agent_view_size
 
         return topX, topY, botX, botY
+
+    def get_pov_render(self, tile_size):
+        """
+        Render an agent's POV observation for visualization
+        """
+        grid, vis_mask = self.gen_obs_grid()
+
+        # Render the whole grid
+        img = grid.render(
+            tile_size,
+            agent_pos=(self.agent_view_size // 2, self.agent_view_size - 1),
+            agent_dir=3,
+            highlight_mask=vis_mask,
+        )
+
+        return img
 
     def gen_obs_grid(self, agent_view_size=None):
         """
@@ -726,7 +749,7 @@ class SaltAndPepper(MiniGridEnv):
         # Make it so the agent sees what it's carrying
         # We do this by placing the carried object at the agent's position
         # in the agent's partially observable view
-        agent_pos = grid.width // 2, grid.height - 1
+        agent_pos = grid.width // 2, grid.height // 2
         if self.carrying:
             grid.set(*agent_pos, self.carrying)
         else:
