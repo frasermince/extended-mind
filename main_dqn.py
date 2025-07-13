@@ -60,6 +60,8 @@ class Args:
     """the id of the environment"""
     total_timesteps: int = 50000
     """total timesteps of the experiments"""
+    feature_dim: int = 64
+    """the dimension of the feature space"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
     num_envs: int = 1
@@ -153,7 +155,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         )
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"{args.env_id}__{args.exp_name}__seed_{args.seed}__{int(time.time())}__{args.experiment_description}__learning_rate_{args.learning_rate}"
+    run_name = f"{args.env_id}__{args.exp_name}__seed_{args.seed}__{int(time.time())}__{args.experiment_description}__learning_rate_{args.learning_rate}__feature_dim_{args.feature_dim}__agent_view_size_{args.agent_view_size}"
     if args.track:
         import wandb
 
@@ -254,6 +256,7 @@ poetry run pip install "stable_baselines3==2.0.0a1"
         seed = args.seed
         q_network = Network(
             # obs_shape=envs.observation_space.shape,
+            feature_dim=args.feature_dim,
             action_dim=envs.action_space.n,
         )
         q_state = TrainState.create(
