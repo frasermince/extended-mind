@@ -47,6 +47,10 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
                 f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
             )
 
+    @property
+    def enabled(self):
+        return self.recording
+
     def render(self):
         img_total = self.env.unwrapped.get_full_render(
             self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
