@@ -709,7 +709,7 @@ class SaltAndPepper(MiniGridEnv):
         self.agent_pos = np.array((width // 2, height - 2))
         self.agent_dir = 3
 
-        self.goal_position = (1, 1)
+        self.goal_position = (2, 3)
 
         self.put_obj(Goal(), *self.goal_position)
 
