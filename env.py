@@ -225,6 +225,7 @@ class DirectionlessGrid(Grid):
         # self.tile_size = kwargs.pop("tile_size", TILE_PIXELS)
         self.unique_tiles = kwargs.pop("unique_tiles", None)
         self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
+        self.tile_global_indices = kwargs.pop("tile_global_indices", None)
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
@@ -300,15 +301,23 @@ class DirectionlessGrid(Grid):
         """
         Render a tile and cache the result
         """
-        # Hash map lookup key for the cache
-        key: tuple[Any, ...] = (
-            agent_dir,
-            highlight,
-            tile_size,
-            obj,
-            tuple(grid.unique_tiles[i, j].flatten()),
-            reveal_all,
-        )
+
+        if reveal_all:
+            key: tuple[Any, ...] = (
+                tile_size,
+                obj,
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
+                reveal_all,
+            )
+        else:
+            key: tuple[Any, ...] = (
+                tile_size,
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
+                reveal_all,
+            )
+
         key = obj.encode() + key if obj else key
 
         if key in cls.tile_cache:
@@ -425,10 +434,14 @@ class DirectionlessGrid(Grid):
             :,
             :,
         ]
+        relevant_unique_global_indices = self.tile_global_indices[
+            topX : topX + width, topY : topY + height, :
+        ]
 
         grid = DirectionlessGrid(
             width,
             height,
+            tile_global_indices=relevant_unique_global_indices,
             unique_tiles=relevant_unique,
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
@@ -614,9 +627,12 @@ class SaltAndPepper(MiniGridEnv):
         )
         self.tile_size = TILE_PIXELS
         self.size = size
-        self.unique_tiles, self.padded_unique_tiles, self.pad_width = (
-            self._gen_unique_tiles()
-        )
+        (
+            self.unique_tiles,
+            self.padded_unique_tiles,
+            self.pad_width,
+            self.tile_global_indices,
+        ) = self._gen_unique_tiles()
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -658,11 +674,16 @@ class SaltAndPepper(MiniGridEnv):
         #     np.repeat(all_tile_pixels, section_size, axis=2), section_size, axis=3
         # )
         # Pad by agent_view_size on each side
-
+        x_indices = np.arange(pad_width, self.size + pad_width)
+        y_indices = np.arange(pad_width, self.size + pad_width)
+        tile_global_indices = np.stack(
+            np.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1
+        )
         return (
             padded_tiles[pad_width:-pad_width, pad_width:-pad_width, :, :],
             padded_tiles,
             pad_width,
+            tile_global_indices,
         )
 
     def _gen_grid(self, width, height):
@@ -678,6 +699,7 @@ class SaltAndPepper(MiniGridEnv):
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
+            tile_global_indices=self.tile_global_indices,
         )
 
         # Generate the surrounding walls
@@ -691,6 +713,13 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
+        img = self.grid.render(
+            TILE_PIXELS,
+            self.agent_pos,
+            self.agent_dir,
+            highlight_mask=None,
+            reveal_all=False,
+        )
 
     def get_view_exts(self, agent_view_size=None):
         """
