@@ -16,13 +16,16 @@ import tyro
 from flax.training.train_state import TrainState
 
 from tqdm import tqdm
-from stable_baselines3.common.buffers import DictReplayBuffer
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
+
 
 from networks_jax import Network
 
 from env import TILE_PIXELS, PartialAndTotalRecordVideo, GrayscaleObservation
+from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
+
+import matplotlib.pyplot as plt
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -144,15 +147,6 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
 
 
 if __name__ == "__main__":
-    import stable_baselines3 as sb3
-
-    if sb3.__version__ < "2.0":
-        raise ValueError(
-            """Ongoing migration: run the following command to install the new dependencies:
-
-poetry run pip install "stable_baselines3==2.0.0a1"
-"""
-        )
     args = tyro.cli(Args)
     assert args.num_envs == 1, "vectorized envs are not supported at the moment"
     run_name = f"{args.env_id}__{args.exp_name}__seed_{args.seed}__{int(time.time())}__{args.experiment_description}__learning_rate_{args.learning_rate}__feature_dim_{args.feature_dim}__agent_view_size_{args.agent_view_size}"
@@ -232,8 +226,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            import matplotlib.pyplot as plt
-
             plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
             plt.savefig("previous_obs_image.png")
             plt.close()
@@ -286,13 +278,9 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             )
         )
 
-        rb = DictReplayBuffer(
+        rb = ReplayBuffer(
             args.buffer_size,
-            gym.spaces.Dict(
-                {
-                    "image": envs.observation_space["image"],
-                }
-            ),
+            envs.observation_space["image"],
             envs.action_space,
             "cpu",
             handle_timeout_termination=False,
@@ -363,8 +351,6 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            import matplotlib.pyplot as plt
-
             plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
             plt.savefig("previous_obs_image.png")
             plt.close()
@@ -402,8 +388,8 @@ poetry run pip install "stable_baselines3==2.0.0a1"
             real_next_obs = next_obs.copy()
 
             rb.add(
-                {"image": obs["image"]},
-                {"image": real_next_obs["image"]},
+                obs["image"],
+                real_next_obs["image"],
                 actions,
                 rewards,
                 terminations,

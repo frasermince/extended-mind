@@ -309,6 +309,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
+                agent_dir,
             )
         else:
             key: tuple[Any, ...] = (
