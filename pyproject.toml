@@ -1,27 +1,24 @@
-[tool.poetry]
+[project]
 name = "extended-mind"
 version = "0.1.0"
 description = ""
-authors = ["Fraser Mince <frasermince@gmail.com>"]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.11"
-gymnasium = "^1.1.1"
-minigrid = "^3.0.0"
-numpy = "^2.2.4"
-tyro = "^0.9.18"
-torch = "^2.6.0"
-tensorboard = "^2.19.0"
-moviepy = "^2.1.2"
-colt5-attention = "^0.11.1"
-flax = "^0.10.6"
-jax = "^0.6.0"
-optax = "^0.2.4"
-stable-baselines3 = "^2.6.0"
-wandb = "^0.19.10"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+authors = [
+    {name = "Fraser Mince", email = "frasermince@gmail.com"},
+]
+requires-python = "<4.0,>=3.11"
+dependencies = [
+    "gymnasium<2.0.0,>=1.1.1",
+    "minigrid<4.0.0,>=3.0.0",
+    "numpy<3.0.0,>=2.2.4",
+    "tyro<1.0.0,>=0.9.18",
+    "torch<3.0.0,>=2.6.0",
+    "tensorboard<3.0.0,>=2.19.0",
+    "moviepy<3.0.0,>=2.1.2",
+    "colt5-attention<1.0.0,>=0.11.1",
+    "flax<1.0.0,>=0.10.6",
+    "jax<1.0.0,>=0.6.0",
+    "optax<1.0.0,>=0.2.4",
+    "stable-baselines3<3.0.0,>=2.6.0",
+    "wandb<1.0.0,>=0.19.10",
+]
