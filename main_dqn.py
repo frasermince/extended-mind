@@ -30,7 +30,7 @@ import hydra
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
     entry_point="env:SaltAndPepper",
-    kwcfg={"size": 11},
+    kwargs={"size": 11},
 )
 
 def make_env(
