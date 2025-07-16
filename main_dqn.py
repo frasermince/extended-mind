@@ -25,7 +25,7 @@ from env import TILE_PIXELS, PartialAndTotalRecordVideo, GrayscaleObservation
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -226,13 +226,13 @@ if __name__ == "__main__":
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("previous_obs_image.png")
-            plt.close()
+            # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("previous_obs_image.png")
+            # plt.close()
 
-            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("next_obs_image.png")
-            plt.close()
+            # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("next_obs_image.png")
+            # plt.close()
 
     def train_env():
         print("Default JAX device:", jax.devices()[0])
@@ -351,13 +351,13 @@ if __name__ == "__main__":
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("previous_obs_image.png")
-            plt.close()
+            # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("previous_obs_image.png")
+            # plt.close()
 
-            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-            plt.savefig("next_obs_image.png")
-            plt.close()
+            # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            # plt.savefig("next_obs_image.png")
+            # plt.close()
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             if np.any(truncations) or np.any(terminations):
