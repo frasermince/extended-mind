@@ -12,14 +12,16 @@ dependencies = [
     "minigrid<4.0.0,>=3.0.0",
     "numpy<3.0.0,>=2.2.4",
     "tyro<1.0.0,>=0.9.18",
-    "torch<3.0.0,>=2.6.0",
     "tensorboard<3.0.0,>=2.19.0",
     "moviepy<3.0.0,>=2.1.2",
-    "colt5-attention<1.0.0,>=0.11.1",
     "flax<1.0.0,>=0.10.6",
-    "jax<1.0.0,>=0.6.0",
+    "jax<1.0.0,>=0.6.2",
     "optax<1.0.0,>=0.2.4",
-    "stable-baselines3<3.0.0,>=2.6.0",
     "wandb<1.0.0,>=0.19.10",
     "matplotlib-inline>=0.1.7",
+]
+
+[project.optional-dependencies]
+cuda12 = [
+    "jax[cuda12]>=0.6.2",
 ]
