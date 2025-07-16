@@ -406,11 +406,11 @@ if __name__ == "__main__":
 
                     loss, old_val, q_state = update(
                         q_state,
-                        data.observations["image"].numpy(),
-                        data.actions.numpy(),
-                        data.next_observations["image"].numpy(),
-                        data.rewards.flatten().numpy(),
-                        data.dones.flatten().numpy(),
+                        np.array(data.observations),
+                        np.array(data.actions),
+                        np.array(data.next_observations),
+                        np.array(data.rewards).flatten(),
+                        np.array(data.dones).flatten(),
                     )
 
                     if global_step % 100 == 0:
