@@ -39,7 +39,7 @@ num_envs: 1
 # the replay memory buffer size
 buffer_size: 1000000
 # the discount factor gamma
-gamma: 0.99
+gamma: 0.95
 # the target network update rate
 tau: 1.0
 # the timesteps it takes to update the target network
