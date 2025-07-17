@@ -1,0 +1,61 @@
+# the name of this experiment
+exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
+
+# seed of the experiment
+seed: 1
+# if toggled, this experiment will be tracked with Weights and Biases
+track: true
+# the wandb's project name
+wandb_project_name: "SaltAndPepper"
+# the entity (team) of wandb's project
+wandb_entity: "frasermince"
+# whether to capture videos of the agent performances (check out `videos` folder)
+capture_video: false
+# whether to save model into the `runs/{run_name}` folder
+save_model: false
+# whether to upload the saved model to huggingface
+upload_model: false
+# the user or org name of the model repository from the Hugging Face Hub
+hf_entity: ""
+
+experiment_description: "big-grid"
+show_grid_lines: false
+show_walls_pov: false
+agent_view_size: 3
+
+
+# Algorithm specific arguments
+
+# the id of the environment
+env_id: "MiniGrid-SaltAndPepper-v0-custom"
+# total timesteps of the experiments
+total_timesteps: 50000
+# the dimension of the feature space
+feature_dim: 256
+# the learning rate of the optimizer
+learning_rate: 1e-4
+# the number of parallel game environments
+num_envs: 1
+# the replay memory buffer size
+buffer_size: 1000000
+# the discount factor gamma
+gamma: 0.99
+# the target network update rate
+tau: 1.0
+# the timesteps it takes to update the target network
+target_network_frequency: 500
+# the batch size of sample from the replay memory
+batch_size: 16
+# the starting epsilon for exploration
+start_e: 1.0
+# the ending epsilon for exploration
+end_e: 0.01
+# the fraction of `total-timesteps` it takes from start-e to go end-e
+exploration_fraction: 0.10
+# timestep to start learning
+learning_starts: 1e-4
+# the frequency of training
+train_frequency: 1
+
+eval: false
+train: true
