@@ -18,12 +18,14 @@ from flax.training.train_state import TrainState
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
 
-
 from networks_jax import Network
 
 from env import TILE_PIXELS, PartialAndTotalRecordVideo, GrayscaleObservation
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
+
+from omegaconf import OmegaConf
+import hydra
 
 # import matplotlib.pyplot as plt
 
@@ -32,65 +34,6 @@ register(
     entry_point="env:SaltAndPepper",
     kwargs={"size": 11},
 )
-
-
-@dataclass
-class Args:
-    exp_name: str = os.path.basename(__file__)[: -len(".py")]
-    """the name of this experiment"""
-    seed: int = 1
-    """seed of the experiment"""
-    track: bool = True
-    """if toggled, this experiment will be tracked with Weights and Biases"""
-    wandb_project_name: str = "SaltAndPepper"
-    """the wandb's project name"""
-    wandb_entity: str = "frasermince"
-    """the entity (team) of wandb's project"""
-    capture_video: bool = True
-    """whether to capture videos of the agent performances (check out `videos` folder)"""
-    save_model: bool = False
-    """whether to save model into the `runs/{run_name}` folder"""
-    upload_model: bool = False
-    """whether to upload the saved model to huggingface"""
-    hf_entity: str = ""
-    """the user or org name of the model repository from the Hugging Face Hub"""
-    experiment_description: str = "seen-goal"
-    show_grid_lines: bool = False
-    show_walls_pov: bool = False
-    agent_view_size: int = 5
-    # Algorithm specific arguments
-    env_id: str = "MiniGrid-SaltAndPepper-v0-custom"
-    """the id of the environment"""
-    total_timesteps: int = 50000
-    """total timesteps of the experiments"""
-    feature_dim: int = 64
-    """the dimension of the feature space"""
-    learning_rate: float = 1e-4
-    """the learning rate of the optimizer"""
-    num_envs: int = 1
-    """the number of parallel game environments"""
-    buffer_size: int = 1000000
-    """the replay memory buffer size"""
-    gamma: float = 0.99
-    """the discount factor gamma"""
-    tau: float = 1.0
-    """the target network update rate"""
-    target_network_frequency: int = 500
-    """the timesteps it takes to update the target network"""
-    batch_size: int = 16
-    """the batch size of sample from the reply memory"""
-    start_e: float = 1
-    """the starting epsilon for exploration"""
-    end_e: float = 0.01
-    """the ending epsilon for exploration"""
-    exploration_fraction: float = 0.10
-    """the fraction of `total-timesteps` it takes from start-e to go end-e"""
-    learning_starts: int = 10000
-    """timestep to start learning"""
-    train_frequency: int = 1
-    """the frequency of training"""
-    eval: bool = False
-    train: bool = True
 
 
 def make_env(
@@ -146,18 +89,21 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-if __name__ == "__main__":
-    args = tyro.cli(Args)
-    assert args.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"{args.env_id}__{args.exp_name}__seed_{args.seed}__{int(time.time())}__{args.experiment_description}__learning_rate_{args.learning_rate}__feature_dim_{args.feature_dim}__agent_view_size_{args.agent_view_size}"
-    if args.track:
+@hydra.main(config_path=".", config_name="config.yaml", version_base=None)
+def main(cfg):
+    print("Hydra loaded config:")
+    print(cfg)
+
+    assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
+    run_name = f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}__feature_dim_{cfg.feature_dim}__agent_view_size_{cfg.agent_view_size}"
+    if cfg.track:
         import wandb
 
         wandb.init(
-            project=args.wandb_project_name,
-            entity=args.wandb_entity,
+            project=cfg.wandb_project_name,
+            entity=cfg.wandb_entity,
             sync_tensorboard=True,
-            config=vars(args),
+            config=OmegaConf.to_container(cfg, resolve=True),
             name=run_name,
             monitor_gym=True,
             save_code=True,
@@ -166,45 +112,45 @@ if __name__ == "__main__":
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
-        % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+        % ("\n".join([f"|{key}|{value}|" for key, value in vars(cfg).items()])),
     )
 
     # TRY NOT TO MODIFY: seeding
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    key = jax.random.PRNGKey(args.seed)
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    key = jax.random.PRNGKey(cfg.seed)
     key, q_key = jax.random.split(key, 2)
 
     # env setup
     envs = make_env(
-        args.env_id,
-        args.seed + 1,
+        cfg.env_id,
+        cfg.seed + 1,
         1,
-        args.capture_video,
+        cfg.capture_video,
         run_name,
-        args.show_grid_lines,
-        args.agent_view_size,
-        args.show_walls_pov,
+        cfg.show_grid_lines,
+        cfg.agent_view_size,
+        cfg.show_walls_pov,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
     ), "only discrete action space is supported"
 
-    obs, _ = envs.reset(seed=args.seed)
+    obs, _ = envs.reset(seed=cfg.seed)
 
     def eval_env():
         print("****Evaluating****")
-        obs, _ = envs.reset(seed=args.seed)
+        obs, _ = envs.reset(seed=cfg.seed)
         terminations = np.array([False])
         truncations = np.array([False])
-        seed = args.seed
+        seed = cfg.seed
 
         hardcoded_actions = [
             envs.unwrapped.actions.left,
             envs.unwrapped.actions.forward,
         ]
         action_index = 0
-        for global_step in tqdm(range(args.total_timesteps)):
+        for global_step in tqdm(range(cfg.total_timesteps)):
             # ALGO LOGIC: put action logic here
 
             actions = jnp.array([hardcoded_actions[action_index]])
@@ -241,14 +187,14 @@ if __name__ == "__main__":
         start_time = time.time()
 
         # TRY NOT TO MODIFY: start the game
-        obs, _ = envs.reset(seed=args.seed)
+        obs, _ = envs.reset(seed=cfg.seed)
 
         terminations = np.array([False])
         truncations = np.array([False])
-        seed = args.seed
+        seed = cfg.seed
         q_network = Network(
             # obs_shape=envs.observation_space.shape,
-            feature_dim=args.feature_dim,
+            feature_dim=cfg.feature_dim,
             action_dim=envs.action_space.n,
         )
         q_state = TrainState.create(
@@ -261,7 +207,7 @@ if __name__ == "__main__":
                 q_key,
                 jnp.expand_dims(jnp.array(obs["image"]), 0),
             ),
-            tx=optax.adam(learning_rate=args.learning_rate),
+            tx=optax.adam(learning_rate=cfg.learning_rate),
         )
         print(
             "params",
@@ -279,7 +225,7 @@ if __name__ == "__main__":
         )
 
         rb = ReplayBuffer(
-            args.buffer_size,
+            cfg.buffer_size,
             envs.observation_space["image"],
             envs.action_space,
             "cpu",
@@ -299,7 +245,7 @@ if __name__ == "__main__":
                 q_state.target_params, next_observations
             )  # (batch_size, num_actions)
             q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
-            next_q_value = rewards + (1 - dones) * args.gamma * q_next_target
+            next_q_value = rewards + (1 - dones) * cfg.gamma * q_next_target
 
             def mse_loss(params):
                 q_pred = q_network.apply(
@@ -316,12 +262,12 @@ if __name__ == "__main__":
             q_state = q_state.apply_gradients(grads=grads)
             return loss_value, q_pred, q_state
 
-        for global_step in tqdm(range(args.total_timesteps)):
+        for global_step in tqdm(range(cfg.total_timesteps)):
             # ALGO LOGIC: put action logic here
             epsilon = linear_schedule(
-                args.start_e,
-                args.end_e,
-                args.exploration_fraction * args.total_timesteps,
+                cfg.start_e,
+                cfg.end_e,
+                cfg.exploration_fraction * cfg.total_timesteps,
                 global_step,
             )
 
@@ -399,9 +345,9 @@ if __name__ == "__main__":
             obs = next_obs
 
             # ALGO LOGIC: training.
-            if global_step > args.learning_starts:
-                if global_step % args.train_frequency == 0:
-                    data = rb.sample(args.batch_size)
+            if global_step > cfg.learning_starts:
+                if global_step % cfg.train_frequency == 0:
+                    data = rb.sample(cfg.batch_size)
                     # perform a gradient-descent step
 
                     loss, old_val, q_state = update(
@@ -435,15 +381,15 @@ if __name__ == "__main__":
                         )
 
                 # update target network
-                if global_step % args.target_network_frequency == 0:
+                if global_step % cfg.target_network_frequency == 0:
                     q_state = q_state.replace(
                         target_params=optax.incremental_update(
-                            q_state.params, q_state.target_params, args.tau
+                            q_state.params, q_state.target_params, cfg.tau
                         )
                     )
 
-        if args.save_model:
-            model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        if cfg.save_model:
+            model_path = f"runs/{run_name}/{cfg.exp_name}.cleanrl_model"
             with open(model_path, "wb") as f:
                 f.write(flax.serialization.to_bytes(q_state.params))
             print(f"model saved to {model_path}")
@@ -452,7 +398,7 @@ if __name__ == "__main__":
             episodic_returns = evaluate(
                 model_path,
                 make_env,
-                args.env_id,
+                cfg.env_id,
                 eval_episodes=10,
                 run_name=f"{run_name}-eval",
                 Model=QNetwork,
@@ -461,15 +407,15 @@ if __name__ == "__main__":
             for idx, episodic_return in enumerate(episodic_returns):
                 writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
-            if args.upload_model:
+            if cfg.upload_model:
                 from cleanrl_utils.huggingface import push_to_hub
 
-                repo_name = f"{args.env_id}-{args.exp_name}-seed{args.seed}"
+                repo_name = f"{cfg.env_id}-{cfg.exp_name}-seed{cfg.seed}"
                 repo_id = (
-                    f"{args.hf_entity}/{repo_name}" if args.hf_entity else repo_name
+                    f"{cfg.hf_entity}/{repo_name}" if cfg.hf_entity else repo_name
                 )
                 push_to_hub(
-                    args,
+                    cfg,
                     episodic_returns,
                     repo_id,
                     "DQN",
@@ -477,10 +423,15 @@ if __name__ == "__main__":
                     f"videos/{run_name}-eval",
                 )
 
-    if args.eval:
+    print(f"train: {cfg.train}, eval: {cfg.eval}")
+    if cfg.eval:
         eval_env()
     else:
         train_env()
 
     envs.close()
     writer.close()
+
+
+if __name__ == "__main__":
+    main()
