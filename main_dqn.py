@@ -32,7 +32,7 @@ import hydra
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
     entry_point="env:SaltAndPepper",
-    kwargs={"size": 11},
+    kwargs={"size": 15},
 )
 
 
