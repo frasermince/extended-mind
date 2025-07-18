@@ -21,6 +21,7 @@ dependencies = [
     "matplotlib-inline>=0.1.7",
     "tensorboardx>=2.6.4",
     "matplotlib>=3.10.3",
+    "omegaconf>=2.3.0",
 ]
 
 [project.optional-dependencies]
