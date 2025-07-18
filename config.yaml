@@ -18,7 +18,7 @@ upload_model: false
 # the user or org name of the model repository from the Hugging Face Hub
 hf_entity: ""
 
-experiment_description: "big-grid"
+experiment_description: "logging-test"
 show_grid_lines: false
 show_walls_pov: false
 agent_view_size: 3
@@ -29,7 +29,7 @@ agent_view_size: 3
 # the id of the environment
 env_id: "MiniGrid-SaltAndPepper-v0-custom"
 # total timesteps of the experiments
-total_timesteps: 50000
+total_timesteps: 100000
 # the dimension of the feature space
 feature_dim: 256
 # the learning rate of the optimizer

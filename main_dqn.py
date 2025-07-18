@@ -108,6 +108,8 @@ def main(cfg):
             monitor_gym=True,
             save_code=True,
         )
+        wandb.define_metric("*", step_metric="global_step", step_sync=True)
+
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -293,6 +295,9 @@ def main(cfg):
             else:
 
                 next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+
+            writer.add_scalar("reward_per_timestep", rewards, global_step)
+            writer.add_scalar("is_done", np.any(terminations), global_step)
             # next_obs = np.expand_dims(obs["image"], axis=0)
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
@@ -308,12 +313,20 @@ def main(cfg):
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             if np.any(truncations) or np.any(terminations):
                 writer.add_scalar("epsilon", epsilon, global_step)
+                writer.add_scalar("charts/is_done", True, global_step)
                 writer.add_scalar(
-                    "charts/episodic_return", infos["episode"]["r"], global_step
+                    "charts/success_rate", infos["episode"]["r"], global_step
                 )
+                writer.add_scalar(
+                    "charts/average_episodic_reward",
+                    infos["episode"]["r"] / infos["episode"]["l"],
+                    envs.unwrapped.num_episodes,
+                )
+
                 writer.add_scalar(
                     "charts/episodic_length", infos["episode"]["l"], global_step
                 )
+
                 writer.add_scalar(
                     "charts/episode_count", envs.unwrapped.num_episodes, global_step
                 )
@@ -329,6 +342,8 @@ def main(cfg):
                 #         writer.add_scalar(
                 #             "charts/episodic_length", info["episode"]["l"], global_step
                 #         )
+            else:
+                writer.add_scalar("charts/is_done", False, global_step)
 
             # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
             real_next_obs = next_obs.copy()
@@ -411,9 +426,7 @@ def main(cfg):
                 from cleanrl_utils.huggingface import push_to_hub
 
                 repo_name = f"{cfg.env_id}-{cfg.exp_name}-seed{cfg.seed}"
-                repo_id = (
-                    f"{cfg.hf_entity}/{repo_name}" if cfg.hf_entity else repo_name
-                )
+                repo_id = f"{cfg.hf_entity}/{repo_name}" if cfg.hf_entity else repo_name
                 push_to_hub(
                     cfg,
                     episodic_returns,
