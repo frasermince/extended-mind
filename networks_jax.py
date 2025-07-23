@@ -22,7 +22,6 @@ class Network(nn.Module):
     @nn.compact
     def __call__(self, x):
         x = x / 255.0
-        x = jnp.expand_dims(x, axis=-1)
 
         # First conv - learn features at full resolution
         x = nn.Conv(32, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(

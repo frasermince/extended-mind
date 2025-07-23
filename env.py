@@ -24,7 +24,6 @@ from typing import Any, SupportsFloat
 
 from enum import IntEnum
 
-TILE_SAMPLE_PIXELS = 64
 TILE_PIXELS = 8
 
 
@@ -56,6 +55,10 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
             self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
         )
         img_partial = self.env.unwrapped.get_pov_render(self.env.unwrapped.tile_size)
+        # img_partial has 1 channel; repeat to make it 3 channels
+        # Handles the fact that the partial view is grayscale
+        if img_partial.ndim == 3 and img_partial.shape[2] == 1:
+            img_partial = np.repeat(img_partial, 3, axis=2)
 
         # INSERT_YOUR_CODE
         # 8x the size of img_total and img_partial using nearest neighbor upsampling
@@ -121,108 +124,8 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
             return render_out
 
 
-class GrayscaleObservation(
-    TransformObservation[WrapperObsType, ActType, ObsType],
-    gym.utils.RecordConstructorArgs,
-):
-    """Converts an image observation computed by ``reset`` and ``step`` from RGB to Grayscale.
-
-    The :attr:`keep_dim` will keep the channel dimension.
-
-    A vector version of the wrapper exists :class:`gymnasium.wrappers.vector.GrayscaleObservation`.
-
-    Example:
-        >>> import gymnasium as gym
-        >>> from gymnasium.wrappers import GrayscaleObservation
-        >>> env = gym.make("CarRacing-v3")
-        >>> env.observation_space.shape
-        (96, 96, 3)
-        >>> grayscale_env = GrayscaleObservation(env)
-        >>> grayscale_env.observation_space.shape
-        (96, 96)
-        >>> grayscale_env = GrayscaleObservation(env, keep_dim=True)
-        >>> grayscale_env.observation_space.shape
-        (96, 96, 1)
-
-    Change logs:
-     * v0.15.0 - Initially added, originally called ``GrayScaleObservation``
-     * v1.0.0 - Renamed to ``GrayscaleObservation``
-    """
-
-    def __init__(self, env: gym.Env[ObsType, ActType], keep_dim: bool = False):
-        """Constructor for an RGB image based environments to make the image grayscale.
-
-        Args:
-            env: The environment to wrap
-            keep_dim: If to keep the channel in the observation, if ``True``, ``obs.shape == 3`` else ``obs.shape == 2``
-        """
-        assert isinstance(env.observation_space.spaces["image"], spaces.Box)
-        assert (
-            len(env.observation_space.spaces["image"].shape) == 3
-            and env.observation_space.spaces["image"].shape[-1] == 3
-        )
-        assert (
-            np.all(env.observation_space.spaces["image"].low == 0)
-            and np.all(env.observation_space.spaces["image"].high == 255)
-            and env.observation_space.spaces["image"].dtype == np.uint8
-        )
-        gym.utils.RecordConstructorArgs.__init__(self, keep_dim=keep_dim)
-
-        self.keep_dim: Final[bool] = keep_dim
-        if keep_dim:
-            new_observation_image_space = spaces.Box(
-                low=0,
-                high=255,
-                shape=env.observation_space.spaces["image"].shape[:2] + (1,),
-                dtype=np.uint8,
-            )
-            new_observation_space = env.observation_space
-            new_observation_space.spaces["image"] = new_observation_image_space
-            TransformObservation.__init__(
-                self,
-                env=env,
-                func=lambda obs: {
-                    **obs,
-                    "image": np.expand_dims(
-                        np.sum(
-                            255
-                            - np.multiply(
-                                obs["image"], np.array([0.2125, 0.7154, 0.0721])
-                            ),
-                            axis=-1,
-                        ).astype(np.uint8),
-                        axis=-1,
-                    ),
-                },
-                observation_space=new_observation_space,
-            )
-        else:
-            new_observation_space = env.observation_space
-            new_observation_space.spaces["image"] = spaces.Box(
-                low=0,
-                high=255,
-                shape=env.observation_space.spaces["image"].shape[:2],
-                dtype=np.uint8,
-            )
-            TransformObservation.__init__(
-                self,
-                env=env,
-                func=lambda obs: {
-                    **obs,
-                    "image": np.sum(
-                        255
-                        - np.multiply(obs["image"], np.array([0.2125, 0.7154, 0.0721])),
-                        axis=-1,
-                    ).astype(np.uint8),
-                },
-                observation_space=new_observation_space,
-            )
-
-
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
-        # self.invisible_goal = kwargs.pop("invisible_goal", False)
-        # self.tile_size = kwargs.pop("tile_size", TILE_PIXELS)
         self.unique_tiles = kwargs.pop("unique_tiles", None)
         self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
         self.tile_global_indices = kwargs.pop("tile_global_indices", None)
@@ -230,60 +133,6 @@ class DirectionlessGrid(Grid):
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
         super().__init__(*args, **kwargs)
-
-        # if self.unique_tiles is None:
-        #     self.unique_tiles = np.zeros(
-        #         (
-        #             self.width + 2 * self.pad_width,
-        #             self.height + 2 * self.pad_width,
-        #             self.tile_size,
-        #             self.tile_size,
-        #             3,
-        #         ),
-        #         dtype=np.uint8,
-        #     )
-        #     # self.unique_tiles = {}
-        # subdivs = 3
-        # # Generate all unique random black and white pixels for all cells at once
-        # # Calculate section size (8x8 pixels)
-        # section_size = 1
-        # num_sections_per_tile = (self.tile_size * subdivs) // section_size
-
-        # # Generate random black/white sections for all cells
-        # # Generate random black/white sections for all cells
-        # # Each section will be either all black (0,0,0) or all white (255,255,255)
-        # section_colors = np.random.choice(
-        #     [0, 255],
-        #     size=(
-        #         self.width,
-        #         self.height,
-        #         num_sections_per_tile,
-        #         num_sections_per_tile,
-        #     ),
-        #     p=[0.2, 0.8],
-        # )
-        # # Expand to 3 channels - all channels get the same value
-        # all_tile_pixels = np.stack([section_colors] * 3, axis=-1)
-
-        # # Expand sections to full tile size
-        # expanded_tiles = np.repeat(
-        #     np.repeat(all_tile_pixels, section_size, axis=2), section_size, axis=3
-        # )
-        # # Pad by agent_view_size on each side
-        # self.pad_width = int(np.ceil(self.agent_view_size / 2))
-        # expanded_tiles = np.pad(
-        #     expanded_tiles,
-        #     (
-        #         (self.pad_width, self.pad_width),
-        #         (self.pad_width, self.pad_width),
-        #         (0, 0),
-        #         (0, 0),
-        #         (0, 0),
-        #     ),
-        #     mode="constant",
-        #     constant_values=0,
-        # )
-        # self.unique_tiles = expanded_tiles
 
     @classmethod
     def render_tile(
@@ -293,7 +142,7 @@ class DirectionlessGrid(Grid):
         agent_dir: int | None = None,
         highlight: bool = False,
         tile_size: int = TILE_PIXELS,
-        subdivs: int = TILE_SAMPLE_PIXELS // TILE_PIXELS,
+        subdivs: int = 1,
         i: int = 0,
         j: int = 0,
         reveal_all: bool = False,
@@ -325,18 +174,30 @@ class DirectionlessGrid(Grid):
             return cls.tile_cache[key]
 
         if isinstance(obj, Wall):
-            img = np.zeros(
-                shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
-            )
+            if reveal_all:
+                img = np.zeros(
+                    shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
+                )
+            else:
+                img = np.zeros(
+                    shape=(tile_size * subdivs, tile_size * subdivs, 1), dtype=np.uint8
+                )
         else:
-            img = grid.unique_tiles[i, j].copy()
+            if reveal_all:
+                img = grid.unique_tiles[i, j].copy()
+            else:
+                img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
-            fill_coords(img, point_in_rect(0, 0.031, 0, 1), (100, 100, 100))
-            fill_coords(img, point_in_rect(0, 1, 0, 0.031), (100, 100, 100))
+            if reveal_all:
+                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100, 100, 100))
+                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100, 100, 100))
+            else:
+                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100,))
+                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100,))
 
-        if obj is not None:
+        if obj is not None and obj.type != "wall" and reveal_all:
             obj.render(img)
 
         # Overlay the agent on top
@@ -350,13 +211,6 @@ class DirectionlessGrid(Grid):
             # Rotate the agent based on its direction
             # tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir)
             fill_coords(img, tri_fn, (255, 0, 0))
-
-        # Highlight the cell if needed
-        # if highlight:
-        #     highlight_img(img)
-
-        # Downsample the image to perform supersampling/anti-aliasing
-        img = downsample(img, subdivs)
 
         # Cache the rendered tile
         cls.tile_cache[key] = img
@@ -384,7 +238,10 @@ class DirectionlessGrid(Grid):
         width_px = self.width * tile_size
         height_px = self.height * tile_size
 
-        img = np.zeros(shape=(height_px, width_px, 3), dtype=np.uint8)
+        if reveal_all:
+            img = np.zeros(shape=(height_px, width_px, 3), dtype=np.uint8)
+        else:
+            img = np.zeros(shape=(height_px, width_px, 1), dtype=np.uint8)
 
         # Render the grid
         for j in range(0, self.height):
@@ -417,6 +274,7 @@ class DirectionlessGrid(Grid):
                 ymax = (j + 1) * tile_size
                 xmin = i * tile_size
                 xmax = (i + 1) * tile_size
+
                 img[ymin:ymax, xmin:xmax, :] = tile_img
 
         return img
@@ -425,10 +283,6 @@ class DirectionlessGrid(Grid):
         """
         Get a subset of the grid
         """
-        # unique_tiles = self.unique_tiles[topX : topX + width, topY : topY + height]
-        # print("unique_tiles", unique_tiles.shape, topX, topY, width, height)
-        # print("slice", topX, topY, width, height)
-
         relevant_unique = self.padded_unique_tiles[
             self.pad_width + topX : self.pad_width + topX + width,
             self.pad_width + topY : self.pad_width + topY + height,
@@ -609,7 +463,11 @@ class SaltAndPepper(MiniGridEnv):
         image_observation_space = gym.spaces.Box(
             low=0,
             high=255,
-            shape=(self.agent_view_size, self.agent_view_size, 3),
+            shape=(
+                self.agent_view_size * TILE_PIXELS,
+                self.agent_view_size * TILE_PIXELS,
+                1,
+            ),
             dtype="uint8",
         )
         self.action_space = gym.spaces.Discrete(4)
@@ -626,6 +484,7 @@ class SaltAndPepper(MiniGridEnv):
                 ),
             }
         )
+
         self.tile_size = TILE_PIXELS
         self.size = size
         (
@@ -651,7 +510,7 @@ class SaltAndPepper(MiniGridEnv):
         # Generate all unique random black and white pixels for all cells at once
         # Calculate section size (8x8 pixels)
         # section_size = 1
-        num_sections_per_tile = TILE_SAMPLE_PIXELS
+        num_sections_per_tile = TILE_PIXELS
 
         # Generate random black/white sections for all cells
         # Generate random black/white sections for all cells
@@ -795,50 +654,21 @@ class SaltAndPepper(MiniGridEnv):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        # grey_box = Goal("grey")
-        # left_box = (self.width * 3 // 4 - 1, self.height * 2 // 3 - 1)
-        # right_box = (self.width * 3 // 4 + 1, self.height * 2 // 3 - 1)
-        # up_box = (self.width * 3 // 4, self.height * 2 // 3 - 2)
-        # down_box = (self.width * 3 // 4, self.height * 2 // 3)
-        # box_locations = [left_box, right_box, up_box, down_box]
-        # for box in box_locations:
-        #     self.grid.set(box[0], box[1], None)
-
-        # goal_is_right = int(
-        #     np.array_equal(self.goal_position, np.array((self.width - 2, 1)))
-        # )
-        # if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
-
-        # else:
-        #     maybe_goal_corner = np.random.randint(0, 2)
-
-        # if self.agent_pos[1] == 1:
-        #     w, h = right_box if goal_is_right else left_box
-        # else:
-        #     w, h = up_box
-        # if self.num_episodes > self.path_episode_threshold:
-        #     self.put_obj(grey_box, w, h)
-        # else:
-        #     # Randomly decide whether to place box at selected location
-        #     for box in box_locations:
-        #         if self.np_random.random() < 0.5:
-        #             self.put_obj(grey_box, box[0], box[1])
         grid, vis_mask = self.gen_obs_grid()
 
         # Encode the partially observable view into a numpy array
-        image = grid.encode(vis_mask)
+        image = grid.render(
+            TILE_PIXELS,
+            self.agent_pos,
+            self.agent_dir,
+            highlight_mask=None,
+            reveal_all=False,
+        )
 
         # Observations are dictionaries containing:
         # - an image (partially observable view of the environment)
         # - the agent's direction/orientation (acting as a compass)
         # - a textual mission string (instructions for the agent)
-
-        # print(self.agent_pos)
-        # maybe_random_arrow = self.np_random.uniform(
-        #     low=-1.0, high=1.0, size=self.action_space.n
-        # )
-        # if self.agent_pos[0] == (self.height - 1) // 2 and self.agent_pos[1] == 1:
-        #     maybe_random_arrow = self.arrow_q_values
 
         obs = {
             "image": image,
@@ -965,9 +795,3 @@ class SaltAndPepper(MiniGridEnv):
         obs = self.gen_obs()
 
         return obs, reward, terminated, truncated, {}
-
-
-# With this env reward would be
-# 1 - 0.9 * (STEPS / MAX_STEPS)
-# Optimal reward would be:
-# 1 - 0.9 * (12 / 484) = 0.9776859504

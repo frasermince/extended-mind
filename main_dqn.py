@@ -20,14 +20,14 @@ from tensorboardX import SummaryWriter
 
 from networks_jax import Network
 
-from env import TILE_PIXELS, PartialAndTotalRecordVideo, GrayscaleObservation
+from env import TILE_PIXELS, PartialAndTotalRecordVideo
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
 
 from omegaconf import OmegaConf
 import hydra
 
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -55,12 +55,10 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
             )
-            env = minigrid.wrappers.RGBImgPartialObsWrapper(env, tile_size=TILE_PIXELS)
             env = PartialAndTotalRecordVideo(
                 env,
                 f"videos/{run_name}",
             )
-            env = GrayscaleObservation(env)
         else:
             env = gym.make(
                 env_id,
@@ -69,8 +67,6 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
             )
-            env = minigrid.wrappers.RGBImgPartialObsWrapper(env)
-            env = GrayscaleObservation(env)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
         env.action_space.seed(seed)
@@ -199,6 +195,10 @@ def main(cfg):
             feature_dim=cfg.feature_dim,
             action_dim=envs.action_space.n,
         )
+        # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+        # plt.savefig("reset_obs_image.png")
+        # plt.close()
+
         q_state = TrainState.create(
             apply_fn=q_network.apply,
             params=q_network.init(
