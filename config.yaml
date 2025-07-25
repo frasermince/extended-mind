@@ -5,6 +5,10 @@ exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
 seed: 1
 # if toggled, this experiment will be tracked with Weights and Biases
 track: true
+# if toggled (while above is toggled), this will be tracked but in offline mode
+track_offline: false
+# wandb api key
+wandb_api_key: ""
 # the wandb's project name
 wandb_project_name: "SaltAndPepper"
 # the entity (team) of wandb's project
@@ -29,7 +33,7 @@ agent_view_size: 3
 # the id of the environment
 env_id: "MiniGrid-SaltAndPepper-v0-custom"
 # total timesteps of the experiments
-total_timesteps: 100000
+total_timesteps: 10 #100000
 # the dimension of the feature space
 feature_dim: 256
 # the learning rate of the optimizer
