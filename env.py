@@ -1,125 +1,24 @@
-from gymnasium.core import ActType, ObsType, WrapperObsType
-from gymnasium import spaces
-from minigrid.core.constants import OBJECT_TO_IDX
+from gymnasium.core import ActType, ObsType
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Box, Goal, Lava, Wall, WorldObj
+from minigrid.core.world_object import Goal, Wall, WorldObj
 from minigrid.minigrid_env import MiniGridEnv
-from gymnasium.wrappers import TransformObservation
 from minigrid.utils.rendering import (
-    downsample,
     fill_coords,
-    highlight_img,
     point_in_circle,
     point_in_rect,
-    point_in_triangle,
-    rotate_fn,
 )
 
 import gymnasium as gym
 import numpy as np
-import heapq
 
-from minigrid.wrappers import ImgObsWrapper
 from typing import Any, SupportsFloat
 
 from enum import IntEnum
 
+from pathfinding import compute_pixel_dijkstra_path
+
 TILE_PIXELS = 8
-
-
-class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
-    def _capture_frame(self):
-        assert self.recording, "Cannot capture a frame, recording wasn't started."
-
-        frame = self.render()
-        if isinstance(frame, list):
-            if len(frame) == 0:  # render was called
-                return
-            self.render_history += frame
-            frame = frame[-1]
-
-        if isinstance(frame, np.ndarray):
-            self.recorded_frames.append(frame)
-        else:
-            self.stop_recording()
-            logger.warn(
-                f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
-            )
-
-    @property
-    def enabled(self):
-        return self.recording
-
-    def render(self):
-        img_total, img_partial = self.env.unwrapped.render_path_visualizations()
-        # img_partial has 1 channel; repeat to make it 3 channels
-        # Handles the fact that the partial view is grayscale
-        if img_partial.ndim == 3 and img_partial.shape[2] == 1:
-            img_partial = np.repeat(img_partial, 3, axis=2)
-
-        # INSERT_YOUR_CODE
-        # 8x the size of img_total and img_partial using nearest neighbor upsampling
-        def upsample(img, scale):
-            h, w, c = img.shape
-            return np.repeat(np.repeat(img, scale, axis=0), scale, axis=1)
-
-        img_total = upsample(img_total, 8)
-        img_partial = upsample(img_partial, 8)
-        # Stack img_total and img_partial vertically with a padding in between
-
-        # Ensure both images have the same width; if not, pad the smaller one
-        h1, w1, c1 = img_total.shape
-        h2, w2, c2 = img_partial.shape
-        pad_color = 255  # white padding
-
-        # Determine the max width and number of channels
-        max_w = max(w1, w2)
-        max_c = max(c1, c2)
-
-        def pad_img(img, target_w, target_c):
-            h, w, c = img.shape
-            # Pad width if needed, split between left and right
-            if w < target_w:
-                total_pad = target_w - w
-                pad_left = total_pad // 2
-                pad_right = total_pad - pad_left
-                pad_width = ((0, 0), (pad_left, pad_right), (0, 0))
-                img = np.pad(img, pad_width, mode="constant", constant_values=pad_color)
-            # Pad channels if needed
-            if c < target_c:
-                total_pad = target_c - c
-                pad_left = total_pad // 2
-                pad_right = total_pad - pad_left
-                pad_channels = ((0, 0), (0, 0), (pad_left, pad_right))
-                img = np.pad(
-                    img, pad_channels, mode="constant", constant_values=pad_color
-                )
-            return img
-
-        img_total_padded = pad_img(img_total, max_w, max_c)
-        img_partial_padded = pad_img(img_partial, max_w, max_c)
-
-        # Create a padding row (e.g., 10 pixels high)
-        pad_height = 10
-        padding = np.full((pad_height, max_w, max_c), pad_color, dtype=img_total.dtype)
-        padding_bottom = np.full((30, max_w, max_c), pad_color, dtype=img_total.dtype)
-
-        # Concatenate: total on top, then padding, then partial
-        render_out = [
-            np.concatenate(
-                [img_total_padded, padding, img_partial_padded, padding_bottom], axis=0
-            )
-        ]
-        if self.recording and isinstance(render_out, list):
-            self.recorded_frames += render_out
-
-        if len(self.render_history) > 0:
-            tmp_history = self.render_history
-            self.render_history = []
-            return tmp_history + render_out
-        else:
-            return render_out
 
 
 class DirectionlessGrid(Grid):
@@ -344,36 +243,6 @@ class DirectionlessGrid(Grid):
         return grid
 
 
-class ImgObsPositionWrapper(gym.ObservationWrapper):
-    """
-    Use the image as the only observation output, no language/mission.
-
-    Example:
-        >>> import gymnasium as gym
-        >>> from minigrid.wrappers import ImgObsWrapper
-        >>> env = gym.make("MiniGrid-Empty-5x5-v0")
-        >>> obs, _ = env.reset()
-        >>> obs.keys()
-        dict_keys(['image', 'direction', 'mission'])
-        >>> env = ImgObsWrapper(env)
-        >>> obs, _ = env.reset()
-        >>> obs.shape
-        (7, 7, 3)
-    """
-
-    def __init__(self, env):
-        """A wrapper that makes image the only observation.
-
-        Args:
-            env: The environment to apply the wrapper
-        """
-        super().__init__(env)
-        self.observation_space = env.observation_space.spaces["image"]
-
-    def observation(self, obs):
-        return obs["image"], obs
-
-
 class Actions(IntEnum):
     left = 0
     forward = 1
@@ -576,103 +445,11 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
-        self.path = self.compute_pixel_dijkstra_path()
+        self.path = compute_pixel_dijkstra_path(self, TILE_PIXELS)
 
         # Update grid with path pixels
         if self.path:
             self.grid.path_pixels = set(self.path)
-
-    
-    def compute_pixel_dijkstra_path(self):
-        """
-        Compute Dijkstra's path at the pixel level (8x8 pixels per tile)
-        """
-        # Convert tile coordinates to pixel coordinates
-        start_tile = tuple(self.agent_pos)
-        goal_tile = self.goal_position
-        
-        # Agent starts at center of its tile
-        start_px = (start_tile[0] * TILE_PIXELS + TILE_PIXELS // 2, 
-                   start_tile[1] * TILE_PIXELS + TILE_PIXELS // 2)
-        goal_px = (goal_tile[0] * TILE_PIXELS + TILE_PIXELS // 2, 
-                  goal_tile[1] * TILE_PIXELS + TILE_PIXELS // 2)
-        
-        width_px = self.grid.width * TILE_PIXELS
-        height_px = self.grid.height * TILE_PIXELS
-
-        visited = set()
-        came_from = {}
-        cost_so_far = {start_px: 0}
-
-        heap = [(0, start_px)]
-        
-        while heap:
-            current_cost, current = heapq.heappop(heap)
-
-            if current == goal_px:
-                break
-
-            if current in visited:
-                continue
-            visited.add(current)
-
-            px, py = current
-            # 4-directional movement at pixel level
-            neighbors = [
-                (px-1, py), (px+1, py),
-                (px, py-1), (px, py+1)
-            ]
-            
-            for npx, npy in neighbors:
-                if 0 <= npx < width_px and 0 <= npy < height_px:
-                    # Check if this pixel is passable
-                    if self.is_pixel_passable(npx, npy):
-                        new_cost = current_cost + 1
-                        if (npx, npy) not in cost_so_far or new_cost < cost_so_far[(npx, npy)]:
-                            cost_so_far[(npx, npy)] = new_cost
-                            heapq.heappush(heap, (new_cost, (npx, npy)))
-                            came_from[(npx, npy)] = current
-
-        # Reconstruct path
-        if goal_px not in came_from and goal_px != start_px:
-            return []  # No path found
-            
-        current = goal_px
-        path = [current]
-        while current != start_px:
-            current = came_from.get(current)
-            if current is None:
-                return []  # No path
-            path.append(current)
-
-        return path[::-1]  # Start to goal
-    
-    def is_pixel_passable(self, px, py):
-        """
-        Check if a pixel coordinate is passable (not black/pepper and not wall)
-        """
-        # Convert pixel coordinates to tile coordinates
-        tile_x = px // TILE_PIXELS
-        tile_y = py // TILE_PIXELS
-        
-        # Check bounds
-        if tile_x < 0 or tile_x >= self.grid.width or tile_y < 0 or tile_y >= self.grid.height:
-            return False
-            
-        # Check if tile contains a wall
-        cell = self.grid.get(tile_x, tile_y)
-        if isinstance(cell, Wall):
-            return False
-            
-        # Check if the specific pixel within the tile is passable (white/salt)
-        pixel_in_tile_x = px % TILE_PIXELS
-        pixel_in_tile_y = py % TILE_PIXELS
-        
-        # Get the pixel value from unique_tiles
-        pixel_value = self.unique_tiles[tile_x, tile_y, pixel_in_tile_y, pixel_in_tile_x, 0]
-        
-        # Return True if pixel is white (salt), False if black (pepper)
-        return pixel_value > 127  # Threshold for white vs black
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""
