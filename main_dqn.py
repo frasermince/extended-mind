@@ -90,6 +90,8 @@ def main(cfg):
     print("Hydra loaded config:")
     print(cfg)
 
+    if cfg.dry_run:
+        return
     assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
     run_name = f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}__feature_dim_{cfg.feature_dim}__agent_view_size_{cfg.agent_view_size}"
     if cfg.track:
