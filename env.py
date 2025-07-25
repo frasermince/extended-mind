@@ -18,6 +18,7 @@ from minigrid.utils.rendering import (
 
 import gymnasium as gym
 import numpy as np
+import heapq
 
 from minigrid.wrappers import ImgObsWrapper
 from typing import Any, SupportsFloat
@@ -51,10 +52,7 @@ class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
         return self.recording
 
     def render(self):
-        img_total = self.env.unwrapped.get_full_render(
-            self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
-        )
-        img_partial = self.env.unwrapped.get_pov_render(self.env.unwrapped.tile_size)
+        img_total, img_partial = self.env.unwrapped.render_path_visualizations()
         # img_partial has 1 channel; repeat to make it 3 channels
         # Handles the fact that the partial view is grayscale
         if img_partial.ndim == 3 and img_partial.shape[2] == 1:
@@ -227,6 +225,7 @@ class DirectionlessGrid(Grid):
         agent_dir: int | None = None,
         highlight_mask: np.ndarray | None = None,
         reveal_all: bool = False,
+        path: list[tuple[int, int]] | None = None,
     ) -> np.ndarray:
         """
         Render this grid at a given scale
@@ -580,13 +579,108 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
+        self.path = self.compute_dijkstra_path()
+
         img = self.grid.render(
             TILE_PIXELS,
             self.agent_pos,
             self.agent_dir,
             highlight_mask=None,
             reveal_all=False,
+            path=self.path,
         )
+
+    
+    def compute_dijkstra_path(self):
+        start = tuple(self.agent_pos)
+        goal = self.goal_position
+        width, height = self.grid.width, self.grid.height
+
+        visited = set()
+        came_from = {}
+        cost_so_far = {start: 0}
+
+        heap = [(0, start)]
+        
+        while heap:
+            current_cost, current = heapq.heappop(heap)
+
+            if current == goal:
+                break
+
+            if current in visited:
+                continue
+            visited.add(current)
+
+            x, y = current
+            neighbors = [
+                (x-1, y), (x+1, y),
+                (x, y-1), (x, y+1)
+            ]
+            for nx, ny in neighbors:
+                if 0 <= nx < width and 0 <= ny < height:
+                    cell = self.grid.get(nx, ny)
+                    if isinstance(cell, Wall) or isinstance(cell, Lava):
+                        continue
+                    new_cost = current_cost + 1
+                    if (nx, ny) not in cost_so_far or new_cost < cost_so_far[(nx, ny)]:
+                        cost_so_far[(nx, ny)] = new_cost
+                        heapq.heappush(heap, (new_cost, (nx, ny)))
+                        came_from[(nx, ny)] = current
+
+        # Reconstruct path
+        current = goal
+        path = [current]
+        while current != start:
+            current = came_from.get(current)
+            if current is None:
+                return []  # No path
+            path.append(current)
+
+        return path[::-1]  # Start to goal
+
+
+    def draw_path_on_grid(self, img: np.ndarray, path: list[tuple[int, int]], color=(0, 0, 255)) -> np.ndarray:
+        """Overlay a path on a full grid image"""
+        img = img.copy()
+        for (x, y) in path:
+            px = x * self.tile_size
+            py = y * self.tile_size
+            img[py:py+self.tile_size, px:px+self.tile_size] = color
+        return img
+    
+
+    def draw_path_on_agent_view(self, img: np.ndarray, path: list[tuple[int, int]], color=(0, 0, 255)) -> np.ndarray:
+        """Overlay the visible path on the agent's POV image"""
+        img = img.copy()
+
+        # If grayscale (1 channel), repeat to RGB
+        if img.ndim == 3 and img.shape[2] == 1:
+            img = np.repeat(img, 3, axis=2)
+
+        topX, topY, botX, botY = self.get_view_exts()
+
+        for (x, y) in path:
+            if topX <= x < botX and topY <= y < botY:
+                vx = x - topX
+                vy = y - topY
+                px = vx * self.tile_size
+                py = vy * self.tile_size
+                img[py:py+self.tile_size, px:px+self.tile_size] = color
+        return img
+    
+
+    def render_path_visualizations(self):
+        path = self.compute_dijkstra_path()
+
+        full_img = self.get_full_render(highlight=False, tile_size=self.tile_size, reveal_all=True)
+        partial_img = self.get_pov_render(tile_size=self.tile_size)
+
+        full_img_with_path = self.draw_path_on_grid(full_img, path)
+        partial_img_with_path = self.draw_path_on_agent_view(partial_img, path)
+
+        return full_img_with_path, partial_img_with_path
+
 
     def get_view_exts(self, agent_view_size=None):
         """
