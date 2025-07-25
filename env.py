@@ -28,6 +28,8 @@ class DirectionlessGrid(Grid):
         self.tile_global_indices = kwargs.pop("tile_global_indices", None)
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
+        self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
+        self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         super().__init__(*args, **kwargs)
@@ -105,7 +107,7 @@ class DirectionlessGrid(Grid):
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
-            line_thickness = 0.0412
+            line_thickness = 0.0625
             if reveal_all:
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
@@ -219,6 +221,8 @@ class DirectionlessGrid(Grid):
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
+            generate_optimal_path=self.generate_optimal_path,
+            show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
             path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
         )
@@ -309,6 +313,8 @@ class SaltAndPepper(MiniGridEnv):
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)
+        generate_optimal_path = kwargs.pop("generate_optimal_path", True)
+        show_optimal_path = kwargs.pop("show_optimal_path", True)
         agent_view_size = kwargs.pop("agent_view_size", 5)
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
@@ -323,6 +329,8 @@ class SaltAndPepper(MiniGridEnv):
         )
         self.show_grid_lines = show_grid_lines
         self.show_walls_pov = show_walls_pov
+        self.generate_optimal_path = generate_optimal_path
+        self.show_optimal_path = show_optimal_path
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
             low=0,
@@ -377,7 +385,6 @@ class SaltAndPepper(MiniGridEnv):
         num_sections_per_tile = TILE_PIXELS
 
         # Generate random black/white sections for all cells
-        # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
         pad_width = int(np.ceil(self.agent_view_size / 2))
         section_colors = np.random.choice(
@@ -420,6 +427,8 @@ class SaltAndPepper(MiniGridEnv):
             height,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
+            generate_optimal_path=self.generate_optimal_path,
+            show_optimal_path=self.show_optimal_path,
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
@@ -438,11 +447,13 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
-        self.path = compute_pixel_dijkstra_path(self, TILE_PIXELS)
 
-        # Update grid with path pixels
-        if self.path:
-            self.grid.path_pixels = set(self.path)
+        if self.generate_optimal_path:
+            self.path = compute_pixel_dijkstra_path(self, TILE_PIXELS)
+
+            # Update grid with path pixels
+            if self.show_optimal_path and self.path:
+                self.grid.path_pixels = set(self.path)
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""

@@ -2,17 +2,13 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 
 import flax
-import flax.linen as nn
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
-import minigrid
 import numpy as np
 import optax
-import tyro
 from flax.training.train_state import TrainState
 
 from tqdm import tqdm
@@ -20,7 +16,8 @@ from tensorboardX import SummaryWriter
 
 from networks_jax import Network
 
-from env import TILE_PIXELS, PartialAndTotalRecordVideo
+from env import TILE_PIXELS
+from wrappers import PartialAndTotalRecordVideo
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
 
@@ -45,6 +42,8 @@ def make_env(
     show_grid_lines,
     agent_view_size,
     show_walls_pov,
+    generate_optimal_path,
+    show_optimal_path,
 ):
     def thunk():
         if capture_video and idx == 1:
@@ -54,6 +53,7 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
+                show_optimal_path=show_optimal_path,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -66,6 +66,7 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
+                show_optimal_path=show_optimal_path,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -90,8 +91,8 @@ def main(cfg):
     print("Hydra loaded config:")
     print(cfg)
 
-    assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}__feature_dim_{cfg.feature_dim}__agent_view_size_{cfg.agent_view_size}"
+    assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
+    run_name = f"{cfg.training.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.training.learning_rate}__feature_dim_{cfg.training.feature_dim}__agent_view_size_{cfg.agent_view_size}"
     if cfg.track:
         import wandb
 
@@ -121,14 +122,16 @@ def main(cfg):
 
     # env setup
     envs = make_env(
-        cfg.env_id,
+        cfg.training.env_id,
         cfg.seed + 1,
         1,
         cfg.capture_video,
         run_name,
-        cfg.show_grid_lines,
+        cfg.render_options.show_grid_lines,
         cfg.agent_view_size,
-        cfg.show_walls_pov,
+        cfg.render_options.show_walls_pov,
+        cfg.generate_optimal_path,
+        cfg.render_options.show_optimal_path,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
@@ -148,7 +151,7 @@ def main(cfg):
             envs.unwrapped.actions.forward,
         ]
         action_index = 0
-        for global_step in tqdm(range(cfg.total_timesteps)):
+        for global_step in tqdm(range(cfg.training.total_timesteps)):
             # ALGO LOGIC: put action logic here
 
             actions = jnp.array([hardcoded_actions[action_index]])
@@ -192,12 +195,15 @@ def main(cfg):
         seed = cfg.seed
         q_network = Network(
             # obs_shape=envs.observation_space.shape,
-            feature_dim=cfg.feature_dim,
+            feature_dim=cfg.training.feature_dim,
             action_dim=envs.action_space.n,
         )
-        # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-        # plt.savefig("reset_obs_image.png")
-        # plt.close()
+
+        # PLT LOCAL ENV IMAGES
+        print("SAVING ENV IMAGE")
+        plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+        plt.savefig("reset_obs_image.png")
+        plt.close()
 
         q_state = TrainState.create(
             apply_fn=q_network.apply,
@@ -209,7 +215,7 @@ def main(cfg):
                 q_key,
                 jnp.expand_dims(jnp.array(obs["image"]), 0),
             ),
-            tx=optax.adam(learning_rate=cfg.learning_rate),
+            tx=optax.adam(learning_rate=cfg.training.learning_rate),
         )
         print(
             "params",
@@ -227,7 +233,7 @@ def main(cfg):
         )
 
         rb = ReplayBuffer(
-            cfg.buffer_size,
+            cfg.training.buffer_size,
             envs.observation_space["image"],
             envs.action_space,
             "cpu",
@@ -247,7 +253,7 @@ def main(cfg):
                 q_state.target_params, next_observations
             )  # (batch_size, num_actions)
             q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
-            next_q_value = rewards + (1 - dones) * cfg.gamma * q_next_target
+            next_q_value = rewards + (1 - dones) * cfg.training.gamma * q_next_target
 
             def mse_loss(params):
                 q_pred = q_network.apply(
@@ -264,12 +270,12 @@ def main(cfg):
             q_state = q_state.apply_gradients(grads=grads)
             return loss_value, q_pred, q_state
 
-        for global_step in tqdm(range(cfg.total_timesteps)):
+        for global_step in tqdm(range(cfg.training.total_timesteps)):
             # ALGO LOGIC: put action logic here
             epsilon = linear_schedule(
-                cfg.start_e,
-                cfg.end_e,
-                cfg.exploration_fraction * cfg.total_timesteps,
+                cfg.training.start_e,
+                cfg.training.end_e,
+                cfg.training.exploration_fraction * cfg.training.total_timesteps,
                 global_step,
             )
 
@@ -302,13 +308,15 @@ def main(cfg):
             terminations = np.expand_dims(terminations, axis=0)
             truncations = np.expand_dims(truncations, axis=0)
 
-            # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-            # plt.savefig("previous_obs_image.png")
-            # plt.close()
+            # PLT LOCAL ENV IMAGES
+            print("SAVING LOCAL ENV IMAGE")
+            plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("previous_obs_image.png")
+            plt.close()
 
-            # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-            # plt.savefig("next_obs_image.png")
-            # plt.close()
+            plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
+            plt.savefig("next_obs_image.png")
+            plt.close()
 
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             if np.any(truncations) or np.any(terminations):
@@ -360,9 +368,9 @@ def main(cfg):
             obs = next_obs
 
             # ALGO LOGIC: training.
-            if global_step > cfg.learning_starts:
-                if global_step % cfg.train_frequency == 0:
-                    data = rb.sample(cfg.batch_size)
+            if global_step > cfg.training.learning_starts:
+                if global_step % cfg.training.train_frequency == 0:
+                    data = rb.sample(cfg.training.batch_size)
                     # perform a gradient-descent step
 
                     loss, old_val, q_state = update(
@@ -396,10 +404,10 @@ def main(cfg):
                         )
 
                 # update target network
-                if global_step % cfg.target_network_frequency == 0:
+                if global_step % cfg.training.target_network_frequency == 0:
                     q_state = q_state.replace(
                         target_params=optax.incremental_update(
-                            q_state.params, q_state.target_params, cfg.tau
+                            q_state.params, q_state.target_params, cfg.training.tau
                         )
                     )
 
@@ -413,7 +421,7 @@ def main(cfg):
             episodic_returns = evaluate(
                 model_path,
                 make_env,
-                cfg.env_id,
+                cfg.training.env_id,
                 eval_episodes=10,
                 run_name=f"{run_name}-eval",
                 Model=QNetwork,
@@ -425,7 +433,7 @@ def main(cfg):
             if cfg.upload_model:
                 from cleanrl_utils.huggingface import push_to_hub
 
-                repo_name = f"{cfg.env_id}-{cfg.exp_name}-seed{cfg.seed}"
+                repo_name = f"{cfg.training.env_id}-{cfg.exp_name}-seed{cfg.seed}"
                 repo_id = f"{cfg.hf_entity}/{repo_name}" if cfg.hf_entity else repo_name
                 push_to_hub(
                     cfg,
