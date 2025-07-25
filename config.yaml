@@ -23,42 +23,51 @@ upload_model: false
 hf_entity: ""
 
 experiment_description: "logging-test"
-show_grid_lines: false
-show_walls_pov: false
+
+
 agent_view_size: 3
+
+generate_optimal_path: true
+
+render_options:
+  show_grid_lines: true
+  show_walls_pov: false
+  show_optimal_path: true
+
 
 
 # Algorithm specific arguments
-
-# the id of the environment
-env_id: "MiniGrid-SaltAndPepper-v0-custom"
-# total timesteps of the experiments
-total_timesteps: 50000
-# the learning rate of the optimizer
-learning_rate: 1e-4
-# the number of parallel game environments
-num_envs: 1
-# the replay memory buffer size
-buffer_size: 1000000
-# the discount factor gamma
-gamma: 0.95
-# the target network update rate
-tau: 1.0
-# the timesteps it takes to update the target network
-target_network_frequency: 500
-# the batch size of sample from the replay memory
-batch_size: 16
-# the starting epsilon for exploration
-start_e: 1.0
-# the ending epsilon for exploration
-end_e: 0.01
-# the fraction of `total-timesteps` it takes from start-e to go end-e
-exploration_fraction: 0.10
-# timestep to start learning
-learning_starts: 5000
-# the frequency of training
-train_frequency: 1
-dense_features: [8, 8]
+training:
+  # the id of the environment
+  env_id: "MiniGrid-SaltAndPepper-v0-custom"
+  # total timesteps of the experiments
+  total_timesteps: 100000
+  # the dimension of the feature space
+  feature_dim: 256
+  # the learning rate of the optimizer
+  learning_rate: 1e-4
+  # the number of parallel game environments
+  num_envs: 1
+  # the replay memory buffer size
+  buffer_size: 1000000
+  # the discount factor gamma
+  gamma: 0.95
+  # the target network update rate
+  tau: 1.0
+  # the timesteps it takes to update the target network
+  target_network_frequency: 500
+  # the batch size of sample from the replay memory
+  batch_size: 16
+  # the starting epsilon for exploration
+  start_e: 1.0
+  # the ending epsilon for exploration
+  end_e: 0.01
+  # the fraction of `total-timesteps` it takes from start-e to go end-e
+  exploration_fraction: 0.10
+  # timestep to start learning
+  learning_starts: 1e-4
+  # the frequency of training
+  train_frequency: 1
 
 eval: false
 train: true

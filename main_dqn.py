@@ -2,17 +2,13 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 
 import flax
-import flax.linen as nn
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
-import minigrid
 import numpy as np
 import optax
-import tyro
 from flax.training.train_state import TrainState
 
 from tqdm import tqdm
@@ -20,7 +16,8 @@ from tensorboardX import SummaryWriter
 
 from networks_jax import Network
 
-from env import TILE_PIXELS, PartialAndTotalRecordVideo
+from env import TILE_PIXELS
+from wrappers import PartialAndTotalRecordVideo
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
 
@@ -46,6 +43,8 @@ def make_env(
     show_grid_lines,
     agent_view_size,
     show_walls_pov,
+    generate_optimal_path,
+    show_optimal_path,
 ):
     def thunk():
         if capture_video and idx == 0:
@@ -56,6 +55,7 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
+                show_optimal_path=show_optimal_path,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -69,6 +69,7 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
+                show_optimal_path=show_optimal_path,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -492,9 +493,11 @@ def main(cfg):
         0,
         cfg.capture_video,
         run_name,
-        cfg.show_grid_lines,
+        cfg.render_options.show_grid_lines,
         cfg.agent_view_size,
-        cfg.show_walls_pov,
+        cfg.render_options.show_walls_pov,
+        cfg.generate_optimal_path,
+        cfg.render_options.show_optimal_path,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
