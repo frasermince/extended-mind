@@ -41,9 +41,7 @@ training:
   # the id of the environment
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
   # total timesteps of the experiments
-  total_timesteps: 100000
-  # the dimension of the feature space
-  feature_dim: 256
+  total_timesteps: 50000
   # the learning rate of the optimizer
   learning_rate: 1e-4
   # the number of parallel game environments
@@ -65,9 +63,10 @@ training:
   # the fraction of `total-timesteps` it takes from start-e to go end-e
   exploration_fraction: 0.10
   # timestep to start learning
-  learning_starts: 1e-4
+  learning_starts: 5000
   # the frequency of training
   train_frequency: 1
+  dense_features: [8, 8]
 
 eval: false
 train: true

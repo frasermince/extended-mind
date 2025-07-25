@@ -115,7 +115,7 @@ class DirectionlessGrid(Grid):
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
-            line_thickness = 0.0412
+            line_thickness = 0.0625
             if reveal_all:
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
