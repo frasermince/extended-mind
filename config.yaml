@@ -14,7 +14,7 @@ wandb_project_name: "SaltAndPepper"
 # the entity (team) of wandb's project
 wandb_entity: "frasermince"
 # whether to capture videos of the agent performances (check out `videos` folder)
-capture_video: false
+capture_video: true
 # whether to save model into the `runs/{run_name}` folder
 save_model: false
 # whether to upload the saved model to huggingface

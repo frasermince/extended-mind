@@ -131,6 +131,7 @@ class DirectionlessGrid(Grid):
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
         self.seed = kwargs.pop("seed", None)
+        self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -159,6 +160,7 @@ class DirectionlessGrid(Grid):
                 reveal_all,
                 grid.seed,
                 agent_dir,
+                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
         else:
             key: tuple[Any, ...] = (
@@ -167,6 +169,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
                 grid.seed,
+                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
 
         key = obj.encode() + key if obj else key
@@ -189,14 +192,30 @@ class DirectionlessGrid(Grid):
             else:
                 img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
+        # Draw path pixels in blue (same size as wall pixels - individual pixels)
+        tile_x_start = i * tile_size
+        tile_y_start = j * tile_size
+        
+        for px in range(tile_size):
+            for py in range(tile_size):
+                global_px = tile_x_start + px
+                global_py = tile_y_start + py
+                
+                if (global_px, global_py) in grid.path_pixels:
+                    if reveal_all:
+                        img[py, px] = [0, 0, 255]  # Blue in RGB
+                    else:
+                        img[py, px] = [128]  # Gray in grayscale (visible but distinct)
+
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
+            line_thickness = 0.0412
             if reveal_all:
-                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100, 100, 100))
-                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100, 100, 100))
+                fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
+                fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
             else:
-                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100,))
-                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100,))
+                fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
+                fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
         if obj is not None and obj.type != "wall" and reveal_all:
             obj.render(img)
@@ -256,6 +275,7 @@ class DirectionlessGrid(Grid):
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
                 if (
+                    # TODO: Check if wall == pepper == black cells
                     isinstance(cell, Wall)
                     and not reveal_all
                     and not self.show_walls_pov
@@ -306,6 +326,7 @@ class DirectionlessGrid(Grid):
             show_walls_pov=self.show_walls_pov,
             pad_width=self.pad_width,
             seed=self.seed,
+            path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
         )
 
         for j in range(0, height):
@@ -363,23 +384,8 @@ class Actions(IntEnum):
 class SaltAndPepper(MiniGridEnv):
     """
     ## Description
-
-    Depending on the `obstacle_type` parameter:
-    - `Lava` - The agent has to reach the green goal square on the other corner
-        of the room while avoiding rivers of deadly lava which terminate the
-        episode in failure. Each lava stream runs across the room either
-        horizontally or vertically, and has a single crossing point which can be
-        safely used; Luckily, a path to the goal is guaranteed to exist. This
-        environment is useful for studying safety and safe exploration.
-    - otherwise - Similar to the `LavaCrossing` environment, the agent has to
-        reach the green goal square on the other corner of the room, however
-        lava is replaced by walls. This MDP is therefore much easier and maybe
-        useful for quickly testing your algorithms.
-
-    ## Mission Space
-    Depending on the `obstacle_type` parameter:
-    - `Lava` - "avoid the lava and get to the green goal square"
-    - otherwise - "find the opening and get to the green goal square"
+    - `Salt` - Accessible white tiles
+    - `Pepper` - Inaccessible black tiles
 
     ## Action Space
 
@@ -407,26 +413,16 @@ class SaltAndPepper(MiniGridEnv):
     The episode ends if any one of the following conditions is met:
 
     1. The agent reaches the goal.
-    2. The agent falls into lava.
-    3. Timeout (see `max_steps`).
+    2. Timeout (see `max_steps`).
 
     ## Registered Configurations
 
     S: size of the map SxS.
-    N: number of valid crossings across lava or walls from the starting position
+    N: number of valid crossings across walls from the starting position
     to the goal
 
-    - `Lava` :
-        - `MiniGrid-LavaCrossingS9N1-v0`
-        - `MiniGrid-LavaCrossingS9N2-v0`
-        - `MiniGrid-LavaCrossingS9N3-v0`
-        - `MiniGrid-LavaCrossingS11N5-v0`
-
-    - otherwise :
-        - `MiniGrid-SimpleCrossingS9N1-v0`
-        - `MiniGrid-SimpleCrossingS9N2-v0`
-        - `MiniGrid-SimpleCrossingS9N3-v0`
-        - `MiniGrid-SimpleCrossingS11N5-v0`
+    - `SaltAndPepper` :
+        - `MiniGrid-SaltAndPepper-v0-custom`
 
     """
 
@@ -566,6 +562,7 @@ class SaltAndPepper(MiniGridEnv):
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
             seed=self.seed,
+            path_pixels=set(),  # Initialize empty path pixels
         )
 
         # Generate the surrounding walls
@@ -579,108 +576,110 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
-        self.path = self.compute_dijkstra_path()
+        self.path = self.compute_pixel_dijkstra_path()
 
-        img = self.grid.render(
-            TILE_PIXELS,
-            self.agent_pos,
-            self.agent_dir,
-            highlight_mask=None,
-            reveal_all=False,
-            path=self.path,
-        )
+        # Update grid with path pixels
+        if self.path:
+            self.grid.path_pixels = set(self.path)
 
     
-    def compute_dijkstra_path(self):
-        start = tuple(self.agent_pos)
-        goal = self.goal_position
-        width, height = self.grid.width, self.grid.height
+    def compute_pixel_dijkstra_path(self):
+        """
+        Compute Dijkstra's path at the pixel level (8x8 pixels per tile)
+        """
+        # Convert tile coordinates to pixel coordinates
+        start_tile = tuple(self.agent_pos)
+        goal_tile = self.goal_position
+        
+        # Agent starts at center of its tile
+        start_px = (start_tile[0] * TILE_PIXELS + TILE_PIXELS // 2, 
+                   start_tile[1] * TILE_PIXELS + TILE_PIXELS // 2)
+        goal_px = (goal_tile[0] * TILE_PIXELS + TILE_PIXELS // 2, 
+                  goal_tile[1] * TILE_PIXELS + TILE_PIXELS // 2)
+        
+        width_px = self.grid.width * TILE_PIXELS
+        height_px = self.grid.height * TILE_PIXELS
 
         visited = set()
         came_from = {}
-        cost_so_far = {start: 0}
+        cost_so_far = {start_px: 0}
 
-        heap = [(0, start)]
+        heap = [(0, start_px)]
         
         while heap:
             current_cost, current = heapq.heappop(heap)
 
-            if current == goal:
+            if current == goal_px:
                 break
 
             if current in visited:
                 continue
             visited.add(current)
 
-            x, y = current
+            px, py = current
+            # 4-directional movement at pixel level
             neighbors = [
-                (x-1, y), (x+1, y),
-                (x, y-1), (x, y+1)
+                (px-1, py), (px+1, py),
+                (px, py-1), (px, py+1)
             ]
-            for nx, ny in neighbors:
-                if 0 <= nx < width and 0 <= ny < height:
-                    cell = self.grid.get(nx, ny)
-                    if isinstance(cell, Wall) or isinstance(cell, Lava):
-                        continue
-                    new_cost = current_cost + 1
-                    if (nx, ny) not in cost_so_far or new_cost < cost_so_far[(nx, ny)]:
-                        cost_so_far[(nx, ny)] = new_cost
-                        heapq.heappush(heap, (new_cost, (nx, ny)))
-                        came_from[(nx, ny)] = current
+            
+            for npx, npy in neighbors:
+                if 0 <= npx < width_px and 0 <= npy < height_px:
+                    # Check if this pixel is passable
+                    if self.is_pixel_passable(npx, npy):
+                        new_cost = current_cost + 1
+                        if (npx, npy) not in cost_so_far or new_cost < cost_so_far[(npx, npy)]:
+                            cost_so_far[(npx, npy)] = new_cost
+                            heapq.heappush(heap, (new_cost, (npx, npy)))
+                            came_from[(npx, npy)] = current
 
         # Reconstruct path
-        current = goal
+        if goal_px not in came_from and goal_px != start_px:
+            return []  # No path found
+            
+        current = goal_px
         path = [current]
-        while current != start:
+        while current != start_px:
             current = came_from.get(current)
             if current is None:
                 return []  # No path
             path.append(current)
 
         return path[::-1]  # Start to goal
-
-
-    def draw_path_on_grid(self, img: np.ndarray, path: list[tuple[int, int]], color=(0, 0, 255)) -> np.ndarray:
-        """Overlay a path on a full grid image"""
-        img = img.copy()
-        for (x, y) in path:
-            px = x * self.tile_size
-            py = y * self.tile_size
-            img[py:py+self.tile_size, px:px+self.tile_size] = color
-        return img
     
-
-    def draw_path_on_agent_view(self, img: np.ndarray, path: list[tuple[int, int]], color=(0, 0, 255)) -> np.ndarray:
-        """Overlay the visible path on the agent's POV image"""
-        img = img.copy()
-
-        # If grayscale (1 channel), repeat to RGB
-        if img.ndim == 3 and img.shape[2] == 1:
-            img = np.repeat(img, 3, axis=2)
-
-        topX, topY, botX, botY = self.get_view_exts()
-
-        for (x, y) in path:
-            if topX <= x < botX and topY <= y < botY:
-                vx = x - topX
-                vy = y - topY
-                px = vx * self.tile_size
-                py = vy * self.tile_size
-                img[py:py+self.tile_size, px:px+self.tile_size] = color
-        return img
-    
+    def is_pixel_passable(self, px, py):
+        """
+        Check if a pixel coordinate is passable (not black/pepper and not wall)
+        """
+        # Convert pixel coordinates to tile coordinates
+        tile_x = px // TILE_PIXELS
+        tile_y = py // TILE_PIXELS
+        
+        # Check bounds
+        if tile_x < 0 or tile_x >= self.grid.width or tile_y < 0 or tile_y >= self.grid.height:
+            return False
+            
+        # Check if tile contains a wall
+        cell = self.grid.get(tile_x, tile_y)
+        if isinstance(cell, Wall):
+            return False
+            
+        # Check if the specific pixel within the tile is passable (white/salt)
+        pixel_in_tile_x = px % TILE_PIXELS
+        pixel_in_tile_y = py % TILE_PIXELS
+        
+        # Get the pixel value from unique_tiles
+        pixel_value = self.unique_tiles[tile_x, tile_y, pixel_in_tile_y, pixel_in_tile_x, 0]
+        
+        # Return True if pixel is white (salt), False if black (pepper)
+        return pixel_value > 127  # Threshold for white vs black
 
     def render_path_visualizations(self):
-        path = self.compute_dijkstra_path()
-
+        """Render both full and partial views with path visualization"""
         full_img = self.get_full_render(highlight=False, tile_size=self.tile_size, reveal_all=True)
         partial_img = self.get_pov_render(tile_size=self.tile_size)
 
-        full_img_with_path = self.draw_path_on_grid(full_img, path)
-        partial_img_with_path = self.draw_path_on_agent_view(partial_img, path)
-
-        return full_img_with_path, partial_img_with_path
-
+        return full_img, partial_img
 
     def get_view_exts(self, agent_view_size=None):
         """
@@ -730,6 +729,8 @@ class SaltAndPepper(MiniGridEnv):
         agent_view_size = agent_view_size or self.agent_view_size
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
+
+        grid.path_pixels = self.grid.path_pixels
 
         # Process occluders and visibility
         # Note that this incurs some performance cost
@@ -841,8 +842,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move right
         elif action == self.actions.right:
@@ -853,8 +852,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move forward
         elif action == self.actions.forward:
@@ -865,8 +862,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move backward
         elif action == self.actions.backward:
@@ -877,8 +872,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Done action (not used by default)
         elif action == self.actions.done:
