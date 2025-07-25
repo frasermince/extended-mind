@@ -35,6 +35,7 @@ class DirectionlessGrid(Grid):
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         self.tile_cache = {}
         self.seed = kwargs.pop("seed", None)
+        self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -74,6 +75,7 @@ class DirectionlessGrid(Grid):
                 grid.seed,
                 tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
                 grid.seed,
+                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
 
         key = obj.encode() + key if obj else key
@@ -113,7 +115,7 @@ class DirectionlessGrid(Grid):
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
-            line_thickness = 0.0625
+            line_thickness = 0.0412
             if reveal_all:
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
@@ -235,6 +237,7 @@ class DirectionlessGrid(Grid):
             path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
             tile_cache=self.tile_cache,
             seed=self.seed,
+            path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
         )
 
         for j in range(0, height):
@@ -447,6 +450,7 @@ class SaltAndPepper(MiniGridEnv):
             seed=self.seed,
             path_pixels=set(),  # Initialize empty path pixels
             seed=self.seed,
+            path_pixels=set(),  # Initialize empty path pixels
         )
 
         # Generate the surrounding walls
