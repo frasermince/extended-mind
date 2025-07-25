@@ -32,7 +32,7 @@ import matplotlib.pyplot as plt
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
     entry_point="env:SaltAndPepper",
-    kwargs={"size": 15},
+    kwargs={"size": 25},
 )
 
 
@@ -45,6 +45,7 @@ def make_env(
     show_grid_lines,
     agent_view_size,
     show_walls_pov,
+    half_surroundings,
 ):
     def thunk():
         if capture_video and idx == 1:
@@ -54,6 +55,7 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
+                half_surroundings=half_surroundings,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -129,6 +131,7 @@ def main(cfg):
         cfg.show_grid_lines,
         cfg.agent_view_size,
         cfg.show_walls_pov,
+        cfg.half_surroundings,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete

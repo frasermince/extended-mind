@@ -23,18 +23,11 @@ class Network(nn.Module):
     def __call__(self, x):
         x = x / 255.0
 
-        # First conv - learn features at full resolution
-        x = nn.Conv(32, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
-            x
-        )  # 40×40→40×40
-        x = nn.relu(x)
-
-        # Second conv - learn more complex features
         x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
             x
         )  # 40×40→40×40
         x = nn.relu(x)
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 40×40→20×20
+        # x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 40×40→20×20
 
         # Third conv - learn features at reduced resolution
         x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(

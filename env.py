@@ -132,6 +132,8 @@ class DirectionlessGrid(Grid):
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
+        self.half_surroundings = kwargs.pop("half_surroundings", False)
+        self.is_sliced = kwargs.pop("is_sliced", False)
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -230,11 +232,16 @@ class DirectionlessGrid(Grid):
         :param r: target renderer object
         :param tile_size: tile size in pixels
         """
+        center = (self.width // 2, self.height // 2)
 
         if highlight_mask is None:
             highlight_mask = np.zeros(shape=(self.width, self.height), dtype=bool)
 
         # Compute the total grid size
+        # if self.half_surroundings and not reveal_all:
+        #     width_px = tile_size + self.width * (tile_size / 2)
+        #     height_px = tile_size + self.height * (tile_size / 2)
+        # else:
         width_px = self.width * tile_size
         height_px = self.height * tile_size
 
@@ -277,6 +284,10 @@ class DirectionlessGrid(Grid):
 
                 img[ymin:ymax, xmin:xmax, :] = tile_img
 
+        if self.half_surroundings and not reveal_all and self.is_sliced:
+            img = img[
+                tile_size // 2 : -tile_size // 2, tile_size // 2 : -tile_size // 2, :
+            ]
         return img
 
     def slice(self, topX: int, topY: int, width: int, height: int) -> Grid:
@@ -302,6 +313,8 @@ class DirectionlessGrid(Grid):
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
             pad_width=self.pad_width,
+            is_sliced=True,
+            half_surroundings=self.half_surroundings,
         )
 
         for j in range(0, height):
@@ -441,11 +454,12 @@ class SaltAndPepper(MiniGridEnv):
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
-            max_steps = int(size**2.0)
+            max_steps = int(180)
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)
         agent_view_size = kwargs.pop("agent_view_size", 5)
+        half_surroundings = kwargs.pop("half_surroundings", False)
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
             mission_space=mission_space,
@@ -459,13 +473,18 @@ class SaltAndPepper(MiniGridEnv):
         )
         self.show_grid_lines = show_grid_lines
         self.show_walls_pov = show_walls_pov
+        self.half_surroundings = half_surroundings
         self.actions = Actions
+        if self.half_surroundings:
+            view_size = TILE_PIXELS + (self.agent_view_size - 1) * TILE_PIXELS // 2
+        else:
+            view_size = self.agent_view_size * TILE_PIXELS
         image_observation_space = gym.spaces.Box(
             low=0,
             high=255,
             shape=(
-                self.agent_view_size * TILE_PIXELS,
-                self.agent_view_size * TILE_PIXELS,
+                view_size,
+                view_size,
                 1,
             ),
             dtype="uint8",
@@ -560,6 +579,7 @@ class SaltAndPepper(MiniGridEnv):
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
+            half_surroundings=self.half_surroundings,
         )
 
         # Generate the surrounding walls

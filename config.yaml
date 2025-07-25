@@ -10,7 +10,7 @@ wandb_project_name: "SaltAndPepper"
 # the entity (team) of wandb's project
 wandb_entity: "frasermince"
 # whether to capture videos of the agent performances (check out `videos` folder)
-capture_video: false
+capture_video: true
 # whether to save model into the `runs/{run_name}` folder
 save_model: false
 # whether to upload the saved model to huggingface
@@ -22,6 +22,7 @@ experiment_description: "logging-test"
 show_grid_lines: false
 show_walls_pov: false
 agent_view_size: 3
+half_surroundings: true
 
 
 # Algorithm specific arguments
@@ -31,7 +32,7 @@ env_id: "MiniGrid-SaltAndPepper-v0-custom"
 # total timesteps of the experiments
 total_timesteps: 100000
 # the dimension of the feature space
-feature_dim: 256
+feature_dim: 32
 # the learning rate of the optimizer
 learning_rate: 1e-4
 # the number of parallel game environments
