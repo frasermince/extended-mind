@@ -1,0 +1,4 @@
+# SBATCH configuration for Narval cluster
+account: rrg-gberseth
+gpus: 1
+mem: 16G
