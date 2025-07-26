@@ -90,11 +90,19 @@ def main(cfg):
     print("Hydra loaded config:")
     print(cfg)
 
+    if cfg.dry_run:
+        return
     assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
     run_name = f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}__feature_dim_{cfg.feature_dim}__agent_view_size_{cfg.agent_view_size}"
     if cfg.track:
         import wandb
-
+        os.environ["WANDB_API_KEY"] = cfg.wandb_api_key
+        if(cfg.track_offline):
+            os.environ["WANDB_MODE"] = "offline"
+        else:
+            os.environ["WANDB_MODE"] = "online"
+            wandb.login()
+            
         wandb.init(
             project=cfg.wandb_project_name,
             entity=cfg.wandb_entity,
@@ -105,6 +113,7 @@ def main(cfg):
             save_code=True,
         )
         wandb.define_metric("*", step_metric="global_step", step_sync=True)
+
 
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
