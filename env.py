@@ -32,12 +32,11 @@ class DirectionlessGrid(Grid):
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
+        self.tile_cache = {}
         super().__init__(*args, **kwargs)
 
-    @classmethod
     def render_tile(
-        cls,
-        grid: "DirectionlessGrid",
+        self,
         obj: WorldObj | None,
         agent_dir: int | None = None,
         highlight: bool = False,
@@ -55,8 +54,8 @@ class DirectionlessGrid(Grid):
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
+                self.tile_global_indices[i, j][0],
+                self.tile_global_indices[i, j][1],
                 reveal_all,
                 agent_dir,
                 tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
@@ -64,16 +63,16 @@ class DirectionlessGrid(Grid):
         else:
             key: tuple[Any, ...] = (
                 tile_size,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
+                self.tile_global_indices[i, j][0],
+                self.tile_global_indices[i, j][1],
                 reveal_all,
                 tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
 
         key = obj.encode() + key if obj else key
 
-        if key in cls.tile_cache:
-            return cls.tile_cache[key]
+        if key in self.tile_cache:
+            return self.tile_cache[key]
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -86,9 +85,9 @@ class DirectionlessGrid(Grid):
                 )
         else:
             if reveal_all:
-                img = grid.unique_tiles[i, j].copy()
+                img = self.unique_tiles[i, j].copy()
             else:
-                img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
+                img = np.expand_dims(self.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
         # Draw path pixels in blue (same size as wall pixels - individual pixels)
         tile_x_start = i * tile_size
@@ -131,7 +130,7 @@ class DirectionlessGrid(Grid):
             fill_coords(img, tri_fn, (255, 0, 0))
 
         # Cache the rendered tile
-        cls.tile_cache[key] = img
+        self.tile_cache[key] = img
 
         return img
 
@@ -179,8 +178,7 @@ class DirectionlessGrid(Grid):
                     and not self.show_walls_pov
                 ):
                     cell = None
-                tile_img = DirectionlessGrid.render_tile(
-                    self,
+                tile_img = self.render_tile(
                     cell,
                     agent_dir=agent_dir if agent_here else None,
                     highlight=highlight_mask[i, j],
@@ -209,6 +207,7 @@ class DirectionlessGrid(Grid):
             :,
             :,
         ]
+
         relevant_unique_global_indices = self.tile_global_indices[
             topX : topX + width, topY : topY + height, :
         ]
@@ -359,12 +358,6 @@ class SaltAndPepper(MiniGridEnv):
 
         self.tile_size = TILE_PIXELS
         self.size = size
-        (
-            self.unique_tiles,
-            self.padded_unique_tiles,
-            self.pad_width,
-            self.tile_global_indices,
-        ) = self._gen_unique_tiles()
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -387,7 +380,7 @@ class SaltAndPepper(MiniGridEnv):
         # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
         pad_width = int(np.ceil(self.agent_view_size / 2))
-        section_colors = np.random.choice(
+        section_colors = self.np_random.choice(
             [0, 255],
             size=(
                 self.size + pad_width * 2,
@@ -395,7 +388,7 @@ class SaltAndPepper(MiniGridEnv):
                 num_sections_per_tile,
                 num_sections_per_tile,
             ),
-            p=[0.2, 0.8],
+            p=[0.10, 0.90],
         )
         # Expand to 3 channels - all channels get the same value
         padded_tiles = np.stack([section_colors] * 3, axis=-1)
@@ -421,6 +414,12 @@ class SaltAndPepper(MiniGridEnv):
         assert width % 2 == 1 and height % 2 == 1  # odd size
 
         # Create an empty grid
+        (
+            self.unique_tiles,
+            self.padded_unique_tiles,
+            self.pad_width,
+            self.tile_global_indices,
+        ) = self._gen_unique_tiles()
 
         self.grid = DirectionlessGrid(
             width,
