@@ -28,6 +28,7 @@ from omegaconf import OmegaConf
 import hydra
 
 import matplotlib.pyplot as plt
+import pickle
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -85,6 +86,13 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
+def log_metric(writer, metrics_dict, name, value, step):
+    writer.add_scalar(name, value, step)
+    if "data" not in metrics_dict:
+        metrics_dict["data"] = []
+    metrics_dict["data"].append({"metric": name, "step": step, "value": float(value)})
+
+
 def eval_env(cfg, envs):
     print("****Evaluating****")
     obs, _ = envs.reset(seed=cfg.seed)
@@ -125,7 +133,8 @@ def eval_env(cfg, envs):
         # plt.close()
 
 
-def train_env(cfg, envs, q_key, writer):
+def train_env(cfg, envs, q_key, writer, run_name):
+    metrics_dict = {}
     print("Default JAX device:", jax.devices()[0])
     print("All available devices:", jax.devices())
 
@@ -240,8 +249,8 @@ def train_env(cfg, envs, q_key, writer):
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
 
-        writer.add_scalar("reward_per_timestep", rewards, global_step)
-        writer.add_scalar("is_done", np.any(terminations), global_step)
+        log_metric(writer, metrics_dict, "reward_per_timestep", rewards, global_step)
+        log_metric(writer, metrics_dict, "is_done", np.any(terminations), global_step)
         # next_obs = np.expand_dims(obs["image"], axis=0)
         terminations = np.expand_dims(terminations, axis=0)
         truncations = np.expand_dims(truncations, axis=0)
@@ -256,22 +265,38 @@ def train_env(cfg, envs, q_key, writer):
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         if np.any(truncations) or np.any(terminations):
-            writer.add_scalar("epsilon", epsilon, global_step)
-            writer.add_scalar("charts/is_done", True, global_step)
-            writer.add_scalar("charts/success_rate", infos["episode"]["r"], global_step)
-            writer.add_scalar(
+            log_metric(writer, metrics_dict, "epsilon", epsilon, global_step)
+            log_metric(writer, metrics_dict, "charts/is_done", True, global_step)
+            log_metric(
+                writer,
+                metrics_dict,
+                "charts/success_rate",
+                infos["episode"]["r"],
+                global_step,
+            )
+            log_metric(
+                writer,
+                metrics_dict,
                 "charts/average_episodic_reward",
                 infos["episode"]["r"] / infos["episode"]["l"],
                 envs.unwrapped.num_episodes,
             )
 
-            writer.add_scalar(
-                "charts/episodic_length", infos["episode"]["l"], global_step
+            log_metric(
+                writer,
+                metrics_dict,
+                "charts/episodic_length",
+                infos["episode"]["l"],
+                global_step,
+            )
+            log_metric(
+                writer,
+                metrics_dict,
+                "charts/episode_count",
+                envs.unwrapped.num_episodes,
+                global_step,
             )
 
-            writer.add_scalar(
-                "charts/episode_count", envs.unwrapped.num_episodes, global_step
-            )
             # if "final_info" in infos:
             #     for info in infos["final_info"]:
             #         if info and "episode" in info:
@@ -285,7 +310,7 @@ def train_env(cfg, envs, q_key, writer):
             #             "charts/episodic_length", info["episode"]["l"], global_step
             #         )
         else:
-            writer.add_scalar("charts/is_done", False, global_step)
+            log_metric(writer, metrics_dict, "charts/is_done", False, global_step)
 
         # TRY NOT TO MODIFY: save data to reply buffer; handle `final_observation`
         real_next_obs = next_obs.copy()
@@ -317,21 +342,31 @@ def train_env(cfg, envs, q_key, writer):
                 )
 
                 if global_step % 100 == 0:
-                    writer.add_scalar(
-                        "losses/td_loss", jax.device_get(loss), global_step
+                    log_metric(
+                        writer,
+                        metrics_dict,
+                        "losses/td_loss",
+                        jax.device_get(loss),
+                        global_step,
                     )
-                    writer.add_scalar(
+                    log_metric(
+                        writer,
+                        metrics_dict,
                         "losses/average_q_values",
                         jax.device_get(old_val).mean(),
                         global_step,
                     )
-                    writer.add_scalar(
+                    log_metric(
+                        writer,
+                        metrics_dict,
                         "losses/max_q_value",
                         jax.device_get(old_val).max(),
                         global_step,
                     )
                     print("SPS:", int(global_step / (time.time() - start_time)))
-                    writer.add_scalar(
+                    log_metric(
+                        writer,
+                        metrics_dict,
                         "charts/SPS",
                         int(global_step / (time.time() - start_time)),
                         global_step,
@@ -362,7 +397,9 @@ def train_env(cfg, envs, q_key, writer):
             epsilon=0.05,
         )
         for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
+            log_metric(
+                writer, metrics_dict, "eval/episodic_return", episodic_return, idx
+            )
 
         if cfg.upload_model:
             from cleanrl_utils.huggingface import push_to_hub
@@ -377,6 +414,10 @@ def train_env(cfg, envs, q_key, writer):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
+    metrics_path = f"runs/{run_name}/metrics.pkl"
+    with open(metrics_path, "wb") as f:
+        pickle.dump(metrics_dict, f)
+    print(f"Metrics saved to {metrics_path}")
 
 
 @hydra.main(config_path=".", config_name="config.yaml", version_base=None)
@@ -441,7 +482,7 @@ def main(cfg):
     if cfg.eval:
         eval_env(cfg, envs)
     else:
-        train_env(cfg, envs, q_key, writer)
+        train_env(cfg, envs, q_key, writer, run_name)
 
     envs.close()
     writer.close()
