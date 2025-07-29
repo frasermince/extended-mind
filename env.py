@@ -31,8 +31,6 @@ class DirectionlessGrid(Grid):
         self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
-        self.tile_cache = {}
         self.seed = kwargs.pop("seed", None)
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         super().__init__(*args, **kwargs)
@@ -71,7 +69,6 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
                 grid.seed,
                 tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
@@ -247,8 +244,6 @@ class DirectionlessGrid(Grid):
             generate_optimal_path=self.generate_optimal_path,
             show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
-            path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
-            tile_cache=self.tile_cache,
             seed=self.seed,
             path_pixels=local_path_pixels,  # Pass transformed local path pixels
         )
@@ -460,7 +455,6 @@ class SaltAndPepper(MiniGridEnv):
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
-            path_pixels=set(),  # Initialize empty path pixels
             seed=self.seed,
             path_pixels=set(),  # Initialize empty path pixels
         )
@@ -540,6 +534,8 @@ class SaltAndPepper(MiniGridEnv):
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
 
+        # The path pixels are already properly transformed to local coordinates in the slice method
+        # No additional processing needed here
 
         # Process occluders and visibility
         # Note that this incurs some performance cost
