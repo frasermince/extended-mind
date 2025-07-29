@@ -228,6 +228,7 @@ class DirectionlessGrid(Grid):
             pad_width=self.pad_width,
             seed=self.seed,
             path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
+            tile_cache=self.tile_cache,
         )
 
         for j in range(0, height):
