@@ -150,10 +150,8 @@ def train_env(cfg, envs, q_key, writer, run_name):
 
     terminations = np.array([False])
     truncations = np.array([False])
-    seed = cfg.seed
     q_network = Network(
-        # obs_shape=envs.observation_space.shape,
-        feature_dim=cfg.feature_dim,
+        feature_dims=cfg.dense_features,
         action_dim=envs.action_space.n,
     )
     # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)

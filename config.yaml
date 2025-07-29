@@ -33,7 +33,7 @@ agent_view_size: 3
 # the id of the environment
 env_id: "MiniGrid-SaltAndPepper-v0-custom"
 # total timesteps of the experiments
-total_timesteps: 10 #100000
+total_timesteps: 50000
 # the dimension of the feature space
 feature_dim: 256
 # the learning rate of the optimizer
@@ -60,6 +60,7 @@ exploration_fraction: 0.10
 learning_starts: 1e-4
 # the frequency of training
 train_frequency: 1
+dense_features: [20, 10]
 
 eval: false
 train: true
