@@ -25,6 +25,7 @@ def test_config():
     cfg.show_walls_pov = False
     cfg.train = False
     cfg.total_timesteps = 1000
+    cfg.dense_features = [16, 16]
 
     return cfg
 
