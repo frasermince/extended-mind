@@ -55,6 +55,7 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
+                seed=seed,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -67,6 +68,7 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
+                seed=seed,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -86,11 +88,13 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-def log_metric(writer, metrics_dict, name, value, step):
+def log_metric(writer, metrics_dict, name, value, step, step_type="global_step"):
     writer.add_scalar(name, value, step)
     if "data" not in metrics_dict:
         metrics_dict["data"] = []
-    metrics_dict["data"].append({"metric": name, "step": step, "value": float(value)})
+    metrics_dict["data"].append(
+        {"metric": name, "step": step, "value": float(value), "step_type": step_type}
+    )
 
 
 def eval_env(cfg, envs):
@@ -280,6 +284,7 @@ def train_env(cfg, envs, q_key, writer, run_name):
                 "charts/average_episodic_reward",
                 infos["episode"]["r"] / infos["episode"]["l"],
                 envs.unwrapped.num_episodes,
+                "episode",
             )
 
             log_metric(
