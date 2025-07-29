@@ -1,8 +1,5 @@
-import jax
-import jax.numpy as jnp
 from flax import linen as nn
-from typing import Tuple
-import numpy as np
+import dataclasses
 
 
 # def layer_init(key, shape, std=np.sqrt(2), bias_const=0.0):
@@ -17,35 +14,15 @@ class Network(nn.Module):
     """Convolutional network for Q-values"""
 
     action_dim: int
-    feature_dim: int = 64
+    feature_dims: list[int] = dataclasses.field(default_factory=lambda: [120, 84])
 
     @nn.compact
     def __call__(self, x):
         x = x / 255.0
 
-        # First conv - learn features at full resolution
-        x = nn.Conv(32, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
-            x
-        )  # 40×40→40×40
-        x = nn.relu(x)
-
-        # Second conv - learn more complex features
-        x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
-            x
-        )  # 40×40→40×40
-        x = nn.relu(x)
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 40×40→20×20
-
-        # Third conv - learn features at reduced resolution
-        x = nn.Conv(64, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(
-            x
-        )  # 20×20→20×20
-        x = nn.relu(x)
-        x = nn.max_pool(x, window_shape=(2, 2), strides=(2, 2))  # 20×20→10×10
-
         x = x.reshape((x.shape[0], -1))
-
-        x = nn.Dense(self.feature_dim)(x)
-        x = nn.relu(x)
+        for feature_dim in self.feature_dims:
+            x = nn.Dense(feature_dim)(x)
+            x = nn.relu(x)
         x = nn.Dense(self.action_dim)(x)
         return x
