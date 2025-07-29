@@ -111,7 +111,7 @@ class DirectionlessGrid(Grid):
                     if reveal_all:
                         img[py, px] = [0, 0, 255]  # Blue in RGB
                     else:
-                        img[py, px] = [128]  # Gray in grayscale (visible but distinct)
+                        img[py, px, 0] = 128  # Gray in grayscale (visible but distinct)
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
@@ -222,6 +222,22 @@ class DirectionlessGrid(Grid):
             topX : topX + width, topY : topY + height, :
         ]
 
+        # Transform path pixels to local coordinates for the sliced grid
+        local_path_pixels = set()
+        for global_px, global_py in self.path_pixels:
+            # Convert global pixel coordinates to tile coordinates
+            tile_x = global_px // TILE_PIXELS
+            tile_y = global_py // TILE_PIXELS
+            
+            # Check if this tile is within the slice bounds
+            if topX <= tile_x < topX + width and topY <= tile_y < topY + height:
+                # Convert to local pixel coordinates within the slice
+                local_tile_x = tile_x - topX
+                local_tile_y = tile_y - topY
+                local_px = local_tile_x * TILE_PIXELS + (global_px % TILE_PIXELS)
+                local_py = local_tile_y * TILE_PIXELS + (global_py % TILE_PIXELS)
+                local_path_pixels.add((local_px, local_py))
+
         grid = DirectionlessGrid(
             width,
             height,
@@ -237,7 +253,7 @@ class DirectionlessGrid(Grid):
             path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
             tile_cache=self.tile_cache,
             seed=self.seed,
-            path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
+            path_pixels=local_path_pixels,  # Pass transformed local path pixels
         )
 
         for j in range(0, height):
@@ -528,7 +544,6 @@ class SaltAndPepper(MiniGridEnv):
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
 
-        grid.path_pixels = self.grid.path_pixels
 
         # Process occluders and visibility
         # Note that this incurs some performance cost

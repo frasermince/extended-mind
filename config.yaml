@@ -30,10 +30,9 @@ agent_view_size: 3
 generate_optimal_path: true
 
 render_options:
-  show_grid_lines: true
+  show_grid_lines: false
   show_walls_pov: false
   show_optimal_path: true
-
 
 
 # Algorithm specific arguments
