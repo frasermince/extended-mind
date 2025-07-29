@@ -132,15 +132,13 @@ class DirectionlessGrid(Grid):
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
-        tile_cache = kwargs.pop("tile_cache", None)
-        if tile_cache is None:
-            self.tile_cache = {}
-        else:
-            self.tile_cache = tile_cache
+        self.seed = kwargs.pop("seed", None)
         super().__init__(*args, **kwargs)
 
+    @classmethod
     def render_tile(
-        self,
+        cls,
+        grid: "DirectionlessGrid",
         obj: WorldObj | None,
         agent_dir: int | None = None,
         highlight: bool = False,
@@ -158,23 +156,25 @@ class DirectionlessGrid(Grid):
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
-                self.tile_global_indices[i, j][0],
-                self.tile_global_indices[i, j][1],
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
                 reveal_all,
+                grid.seed,
                 agent_dir,
             )
         else:
             key: tuple[Any, ...] = (
                 tile_size,
-                self.tile_global_indices[i, j][0],
-                self.tile_global_indices[i, j][1],
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
                 reveal_all,
+                grid.seed,
             )
 
         key = obj.encode() + key if obj else key
 
-        if key in self.tile_cache:
-            return self.tile_cache[key]
+        if key in cls.tile_cache:
+            return cls.tile_cache[key]
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -187,12 +187,12 @@ class DirectionlessGrid(Grid):
                 )
         else:
             if reveal_all:
-                img = self.unique_tiles[i, j].copy()
+                img = grid.unique_tiles[i, j].copy()
             else:
-                img = np.expand_dims(self.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
+                img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
         # Draw the grid lines (top and left edges)
-        if self.show_grid_lines or reveal_all:
+        if grid.show_grid_lines or reveal_all:
             if reveal_all:
                 fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100, 100, 100))
                 fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100, 100, 100))
@@ -216,7 +216,7 @@ class DirectionlessGrid(Grid):
             fill_coords(img, tri_fn, (255, 0, 0))
 
         # Cache the rendered tile
-        self.tile_cache[key] = img
+        cls.tile_cache[key] = img
 
         return img
 
@@ -262,7 +262,8 @@ class DirectionlessGrid(Grid):
                     and not self.show_walls_pov
                 ):
                     cell = None
-                tile_img = self.render_tile(
+                tile_img = DirectionlessGrid.render_tile(
+                    self,
                     cell,
                     agent_dir=agent_dir if agent_here else None,
                     highlight=highlight_mask[i, j],
@@ -305,7 +306,7 @@ class DirectionlessGrid(Grid):
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
             pad_width=self.pad_width,
-            tile_cache=self.tile_cache,
+            seed=self.seed,
         )
 
         for j in range(0, height):
@@ -436,6 +437,7 @@ class SaltAndPepper(MiniGridEnv):
         max_steps: int | None = None,
         **kwargs,
     ):
+        self.seed = kwargs.pop("seed", None)
         # self.num_crossings = num_crossings
         # self.obstacle_type = obstacle_type
         self.goal_position = None
@@ -564,6 +566,7 @@ class SaltAndPepper(MiniGridEnv):
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
+            seed=self.seed,
         )
 
         # Generate the surrounding walls
