@@ -34,8 +34,6 @@ class DirectionlessGrid(Grid):
         self.seed = kwargs.pop("seed", None)
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         self.tile_cache = {}
-        self.seed = kwargs.pop("seed", None)
-        self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -74,8 +72,6 @@ class DirectionlessGrid(Grid):
                 reveal_all,
                 grid.seed,
                 tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
-                grid.seed,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
             )
 
         key = obj.encode() + key if obj else key
@@ -250,7 +246,6 @@ class DirectionlessGrid(Grid):
             show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
             seed=self.seed,
-            path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
             tile_cache=self.tile_cache,
             seed=self.seed,
             path_pixels=local_path_pixels,  # Pass transformed local path pixels
@@ -465,8 +460,6 @@ class SaltAndPepper(MiniGridEnv):
             tile_global_indices=self.tile_global_indices,
             seed=self.seed,
             path_pixels=set(),  # Initialize empty path pixels
-            seed=self.seed,
-            path_pixels=set(),  # Initialize empty path pixels
         )
 
         # Generate the surrounding walls
@@ -544,6 +537,8 @@ class SaltAndPepper(MiniGridEnv):
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
 
+        # The path pixels are already properly transformed to local coordinates in the slice method
+        # No additional processing needed here
 
         # Process occluders and visibility
         # Note that this incurs some performance cost
