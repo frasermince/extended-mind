@@ -132,7 +132,11 @@ class DirectionlessGrid(Grid):
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.tile_cache = {}
+        tile_cache = kwargs.pop("tile_cache", None)
+        if tile_cache is None:
+            self.tile_cache = {}
+        else:
+            self.tile_cache = tile_cache
         super().__init__(*args, **kwargs)
 
     def render_tile(
@@ -301,6 +305,7 @@ class DirectionlessGrid(Grid):
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
             pad_width=self.pad_width,
+            tile_cache=self.tile_cache,
         )
 
         for j in range(0, height):
