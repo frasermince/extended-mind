@@ -137,7 +137,7 @@ def eval_env(cfg, envs):
         # plt.close()
 
 
-def train_env(cfg, envs, q_key, writer, run_name):
+def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
     metrics_dict = {}
     print("Default JAX device:", jax.devices()[0])
     print("All available devices:", jax.devices())
@@ -418,7 +418,7 @@ def train_env(cfg, envs, q_key, writer, run_name):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
-    metrics_path = f"runs/{run_name}/metrics.pkl"
+    metrics_path = f"{runs_dir}/metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
@@ -436,6 +436,20 @@ def main(cfg):
         f"__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}"
         f"__dense_features_{dense_features_str}__agent_view_size_{cfg.agent_view_size}"
     )
+
+    # Extract learning rate, network depth, and network width from cfg
+    learning_rate_str = str(cfg.learning_rate)
+    network_depth = len(cfg.dense_features)
+    network_width = cfg.dense_features[0] if cfg.dense_features else 0
+
+    runs_dir = os.path.join(
+        "runs",
+        f"learning_rate_{learning_rate_str}",
+        f"network_depth_{network_depth}",
+        f"network_width_{network_width}",
+        f"seed_{cfg.seed}",
+    )
+    os.makedirs(runs_dir, exist_ok=True)
     if cfg.track:
         import wandb
 
@@ -450,7 +464,7 @@ def main(cfg):
         )
         wandb.define_metric("*", step_metric="global_step", step_sync=True)
 
-    writer = SummaryWriter(f"runs/{run_name}")
+    writer = SummaryWriter(f"{runs_dir}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -482,7 +496,7 @@ def main(cfg):
     if cfg.eval:
         eval_env(cfg, envs)
     else:
-        train_env(cfg, envs, q_key, writer, run_name)
+        train_env(cfg, envs, q_key, writer, run_name, runs_dir)
 
     envs.close()
     writer.close()
