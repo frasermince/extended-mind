@@ -63,7 +63,7 @@ class DirectionlessGrid(Grid):
                 reveal_all,
                 grid.seed,
                 agent_dir,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
             )
         else:
             key: tuple[Any, ...] = (
@@ -72,7 +72,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
                 grid.seed,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
                 grid.seed,
             )
 
