@@ -275,7 +275,8 @@ def train_env(cfg, envs, q_key, writer, run_name):
                 metrics_dict,
                 "charts/success_rate",
                 infos["episode"]["r"],
-                global_step,
+                envs.unwrapped.num_episodes,
+                "episode",
             )
             log_metric(
                 writer,
@@ -429,8 +430,13 @@ def main(cfg):
     print("Hydra loaded config:")
     print(cfg)
 
-    assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
-    run_name = f"{cfg.training.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}__{cfg.experiment_description}__learning_rate_{cfg.training.learning_rate}__feature_dim_{cfg.training.feature_dim}__agent_view_size_{cfg.agent_view_size}"
+    assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
+    dense_features_str = "_".join(str(f) for f in cfg.dense_features)
+    run_name = (
+        f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}"
+        f"__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}"
+        f"__dense_features_{dense_features_str}__agent_view_size_{cfg.agent_view_size}"
+    )
     if cfg.track:
         import wandb
 
