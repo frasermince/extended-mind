@@ -34,10 +34,13 @@ class DirectionlessGrid(Grid):
         self.seed = kwargs.pop("seed", None)
         self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
         self.tile_cache = {}
+        self.seed = kwargs.pop("seed", None)
         super().__init__(*args, **kwargs)
 
+    @classmethod
     def render_tile(
-        self,
+        cls,
+        grid: "DirectionlessGrid",
         obj: WorldObj | None,
         agent_dir: int | None = None,
         highlight: bool = False,
@@ -55,8 +58,8 @@ class DirectionlessGrid(Grid):
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
-                self.tile_global_indices[i, j][0],
-                self.tile_global_indices[i, j][1],
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
                 reveal_all,
                 grid.seed,
                 agent_dir,
@@ -65,17 +68,18 @@ class DirectionlessGrid(Grid):
         else:
             key: tuple[Any, ...] = (
                 tile_size,
-                self.tile_global_indices[i, j][0],
-                self.tile_global_indices[i, j][1],
+                grid.tile_global_indices[i, j][0],
+                grid.tile_global_indices[i, j][1],
                 reveal_all,
                 grid.seed,
                 tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
+                grid.seed,
             )
 
         key = obj.encode() + key if obj else key
 
-        if key in self.tile_cache:
-            return self.tile_cache[key]
+        if key in cls.tile_cache:
+            return cls.tile_cache[key]
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -88,9 +92,9 @@ class DirectionlessGrid(Grid):
                 )
         else:
             if reveal_all:
-                img = self.unique_tiles[i, j].copy()
+                img = grid.unique_tiles[i, j].copy()
             else:
-                img = np.expand_dims(self.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
+                img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
         # Draw path pixels in blue (same size as wall pixels - individual pixels)
         tile_x_start = i * tile_size
@@ -133,7 +137,7 @@ class DirectionlessGrid(Grid):
             fill_coords(img, tri_fn, (255, 0, 0))
 
         # Cache the rendered tile
-        self.tile_cache[key] = img
+        cls.tile_cache[key] = img
 
         return img
 
@@ -181,7 +185,8 @@ class DirectionlessGrid(Grid):
                     and not self.show_walls_pov
                 ):
                     cell = None
-                tile_img = self.render_tile(
+                tile_img = DirectionlessGrid.render_tile(
+                    self,
                     cell,
                     agent_dir=agent_dir if agent_here else None,
                     highlight=highlight_mask[i, j],
@@ -229,6 +234,7 @@ class DirectionlessGrid(Grid):
             seed=self.seed,
             path_pixels=self.path_pixels,  # Pass path pixels to sliced grid
             tile_cache=self.tile_cache,
+            seed=self.seed,
         )
 
         for j in range(0, height):
@@ -440,6 +446,7 @@ class SaltAndPepper(MiniGridEnv):
             tile_global_indices=self.tile_global_indices,
             seed=self.seed,
             path_pixels=set(),  # Initialize empty path pixels
+            seed=self.seed,
         )
 
         # Generate the surrounding walls

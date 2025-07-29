@@ -56,6 +56,7 @@ def make_env(
                 show_walls_pov=show_walls_pov,
                 seed=seed,
                 show_optimal_path=show_optimal_path,
+                seed=seed,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -70,6 +71,7 @@ def make_env(
                 show_walls_pov=show_walls_pov,
                 seed=seed,
                 show_optimal_path=show_optimal_path,
+                seed=seed,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
