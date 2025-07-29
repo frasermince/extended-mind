@@ -80,7 +80,7 @@ def compute_pixel_dijkstra_path(env, tile_pixels) -> List[Tuple[int, int]]:
 
 def is_pixel_passable(env, px, py, tile_pixels) -> bool:
     """
-    Determines whether a pixel is passable (not a wall or pepper).
+    Determines whether a pixel is passable (not a wall).
 
     Args:
         env: SaltAndPepper environment instance.
@@ -103,13 +103,5 @@ def is_pixel_passable(env, px, py, tile_pixels) -> bool:
     cell = env.grid.get(tile_x, tile_y)
     if isinstance(cell, Wall):
         return False
-        
-    # Check if the specific pixel within the tile is passable (white/salt)
-    pixel_in_tile_x = px % tile_pixels
-    pixel_in_tile_y = py % tile_pixels
     
-    # Get the pixel value from unique_tiles
-    pixel_value = env.unique_tiles[tile_x, tile_y, pixel_in_tile_y, pixel_in_tile_x, 0]
-    
-    # Return True if pixel is white (salt), False if black (pepper)
-    return pixel_value > PIXEL_PASSABLE_THRESHOLD  # Threshold for white vs black
+    return True

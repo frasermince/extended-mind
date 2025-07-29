@@ -32,7 +32,7 @@ class DirectionlessGrid(Grid):
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
         self.seed = kwargs.pop("seed", None)
-        self.path_pixels = kwargs.pop("path_pixels", set())  # Store pixel-level path coordinates
+        self.path_pixels = kwargs.pop("path_pixels", set())
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -61,7 +61,7 @@ class DirectionlessGrid(Grid):
                 reveal_all,
                 grid.seed,
                 agent_dir,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels)) 
             )
         else:
             key: tuple[Any, ...] = (
@@ -70,7 +70,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
                 grid.seed,
-                tuple(sorted(grid.path_pixels))  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels))
             )
 
         key = obj.encode() + key if obj else key
@@ -93,20 +93,21 @@ class DirectionlessGrid(Grid):
             else:
                 img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
-        # Draw path pixels in blue (same size as wall pixels - individual pixels)
-        tile_x_start = i * tile_size
-        tile_y_start = j * tile_size
-        
-        for px in range(tile_size):
-            for py in range(tile_size):
-                global_px = tile_x_start + px
-                global_py = tile_y_start + py
-                
-                if (global_px, global_py) in grid.path_pixels:
-                    if reveal_all:
-                        img[py, px] = [0, 0, 255]  # Blue in RGB
-                    else:
-                        img[py, px, 0] = 128  # Gray in grayscale (visible but distinct)
+        if grid.generate_optimal_path or grid.show_optimal_path or reveal_all:
+            # Draw path pixels
+            tile_x_start = i * tile_size
+            tile_y_start = j * tile_size
+            
+            for px in range(tile_size):
+                for py in range(tile_size):
+                    global_px = tile_x_start + px
+                    global_py = tile_y_start + py
+                    
+                    if (global_px, global_py) in grid.path_pixels:
+                        if reveal_all:
+                            img[py, px] = [0, 0, 255]  # Blue in RGB
+                        else:
+                            img[py, px, 0] = 128  # Gray in grayscale (visible but distinct)
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
@@ -176,7 +177,6 @@ class DirectionlessGrid(Grid):
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
                 if (
-                    # TODO: Check if wall == pepper == black cells
                     isinstance(cell, Wall)
                     and not reveal_all
                     and not self.show_walls_pov
@@ -245,7 +245,7 @@ class DirectionlessGrid(Grid):
             show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
             seed=self.seed,
-            path_pixels=local_path_pixels,  # Pass transformed local path pixels
+            path_pixels=local_path_pixels,
         )
 
         for j in range(0, height):
@@ -456,7 +456,7 @@ class SaltAndPepper(MiniGridEnv):
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
             seed=self.seed,
-            path_pixels=set(),  # Initialize empty path pixels
+            path_pixels=set(),
         )
 
         # Generate the surrounding walls
