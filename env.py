@@ -23,6 +23,7 @@ TILE_PIXELS = 8
 
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
+        self.seed = kwargs.pop("seed", 42)
         self.unique_tiles = kwargs.pop("unique_tiles", None)
         self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
         self.tile_global_indices = kwargs.pop("tile_global_indices", None)
@@ -31,7 +32,6 @@ class DirectionlessGrid(Grid):
         self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.seed = kwargs.pop("seed", None)
         self.path_pixels = kwargs.pop("path_pixels", set())
         super().__init__(*args, **kwargs)
 
@@ -52,25 +52,27 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
+        base_tile_hash = hash(grid.unique_tiles[i, j].tobytes()) if hasattr(grid, 'unique_tiles') else 0
+
         if reveal_all:
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
+                base_tile_hash,
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                grid.seed,
                 agent_dir,
-                tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels))
             )
         else:
             key: tuple[Any, ...] = (
                 tile_size,
+                base_tile_hash,
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                grid.seed,
-                tuple(sorted(grid.path_pixels)),  # Include path pixels in cache key
+                tuple(sorted(grid.path_pixels))
             )
 
         key = obj.encode() + key if obj else key
@@ -394,6 +396,9 @@ class SaltAndPepper(MiniGridEnv):
         return "get to the green goal square"
 
     def _gen_unique_tiles(self):
+        # Use a fixed random state for generating tiles to ensure consistency
+        tile_rng = np.random.RandomState(self.seed if self.seed is not None else 42)
+
         # subdivs = 3
         # Generate all unique random black and white pixels for all cells at once
         # Calculate section size (8x8 pixels)
@@ -403,7 +408,8 @@ class SaltAndPepper(MiniGridEnv):
         # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
         pad_width = int(np.ceil(self.agent_view_size / 2))
-        section_colors = self.np_random.choice(
+        # Generate the same pattern every time with the fixed seed
+        section_colors = tile_rng.choice(
             [0, 255],
             size=(
                 self.size + pad_width * 2,
@@ -413,6 +419,7 @@ class SaltAndPepper(MiniGridEnv):
             ),
             p=[0.10, 0.90],
         )
+        
         # Expand to 3 channels - all channels get the same value
         padded_tiles = np.stack([section_colors] * 3, axis=-1)
 
