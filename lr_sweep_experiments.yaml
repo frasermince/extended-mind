@@ -1,4 +1,4 @@
-learning_rates:
+learning_rate:
   - 1e-5
   - 3e-5
   - 1e-4

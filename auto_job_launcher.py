@@ -21,21 +21,25 @@ def read_config(conf_file_path):
         config = yaml.safe_load(f)
     return config
 
-def ensure_list_values(input_dict):
-    processed_dict = {}
-    for key, values in input_dict.items():
-        if isinstance(values, str) or not isinstance(values, Iterable):
-            processed_dict[key] = [values]
-        else:
-            processed_dict[key] = values
-    return processed_dict
-
 
 def dict_permutations(input_dict):
     keys = list(input_dict.keys())
     values_lists = list(input_dict.values())
     
-    for combination in itertools.product(*values_lists):
+    # Convert singular values to lists, but keep actual lists as-is for unpacking
+    processed_values = []
+    for i, values in enumerate(values_lists):
+        key = keys[i]
+        if isinstance(values, list):
+            # Don't unpack certain parameters that should stay as lists
+            if key in ['dense_features']:
+                processed_values.append([values])
+            else:
+                processed_values.append(values)
+        else:
+            processed_values.append([values])
+    
+    for combination in itertools.product(*processed_values):
         yield dict(zip(keys, combination))
 
 def submit_bash_script(bash_script_str):
@@ -87,6 +91,10 @@ cd {os.getcwd()}
             
             if isinstance(value, bool):
                 script_params += f"{key}={str(value).lower()} "
+            
+            elif isinstance(value, list):
+                script_params += f"\'{key}={str(value)}\' "
+
             else:
                 shell_val = shlex.quote(str(value))
                 script_params += f"{key}={shell_val} "
@@ -100,15 +108,13 @@ cd {os.getcwd()}
 
 
 def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time):
-    
-    processed_sweep = ensure_list_values(hyperparams_to_sweep)
-    processed_default = ensure_list_values(default_hyperparams)
-    
+        
     sweep_dict = {}
-    for key, values in processed_default.items():
+
+    for key, values in default_hyperparams.items():
         # if specified in sweeps, then use sweep values, else, default values
-        if key in processed_sweep:
-            sweep_dict[key] = processed_sweep[key]
+        if key in hyperparams_to_sweep:
+            sweep_dict[key] = hyperparams_to_sweep[key]
         else:
             sweep_dict[key] = values
     
@@ -116,10 +122,8 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
 
     task_confs = dict_permutations(sweep_dict)
 
-    
     num_tasks_per_job = compute_tasks_num_per_job(max_task_time, max_job_time)
     print(f"Number of tasks per job: {num_tasks_per_job}")
-
 
     one_job_task_confs = []
     for tc in task_confs:
@@ -157,8 +161,8 @@ def main():
     hyperparam_sweep_conf = read_config(args.hyperparam_sweep_conf)
     hyperparam_default_conf = read_config(args.hyperparam_default_conf)
 
-    task_confs_per_job = generate_task_configs_per_job(range(args.num_seeds), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time)
-    
+    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time)
+
     num_jobs = 0
     for one_job_task_confs in task_confs_per_job:
         print(f"Generating script for job {num_jobs+1}...")
