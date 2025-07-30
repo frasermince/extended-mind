@@ -113,7 +113,7 @@ def eval_env(cfg, envs):
 
     hardcoded_actions = cfg.hardcoded_actions
     action_index = 0
-    for global_step in tqdm(range(cfg.total_timesteps)):
+    for global_step in tqdm(range(cfg.training.total_timesteps)):
         # ALGO LOGIC: put action logic here
 
         actions = jnp.array([hardcoded_actions[action_index]])
