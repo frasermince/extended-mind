@@ -31,11 +31,8 @@ def dict_permutations(input_dict):
     for i, values in enumerate(values_lists):
         key = keys[i]
         if isinstance(values, list):
-            # Don't unpack certain parameters that should stay as lists
-            if key in ['dense_features']:
-                processed_values.append([values])
-            else:
-                processed_values.append(values)
+            # Unpack all lists (including dense_features) so each item becomes a separate value
+            processed_values.append(values)
         else:
             processed_values.append([values])
     
