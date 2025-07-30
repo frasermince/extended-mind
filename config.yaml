@@ -5,6 +5,10 @@ exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
 seed: 1
 # if toggled, this experiment will be tracked with Weights and Biases
 track: true
+# if toggled (while above is toggled), this will be tracked but in offline mode
+track_offline: false
+# wandb api key
+wandb_api_key: ""
 # the wandb's project name
 wandb_project_name: "SaltAndPepper"
 # the entity (team) of wandb's project
@@ -58,3 +62,7 @@ dense_features: [8, 8]
 
 eval: false
 train: true
+
+dry_run: false
+
+exp_group_id: "test_id"

@@ -429,6 +429,8 @@ def main(cfg):
     print("Hydra loaded config:")
     print(cfg)
 
+    if cfg.dry_run:
+        return
     assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.dense_features)
     run_name = (
@@ -452,7 +454,13 @@ def main(cfg):
     os.makedirs(runs_dir, exist_ok=True)
     if cfg.track:
         import wandb
-
+        os.environ["WANDB_API_KEY"] = cfg.wandb_api_key
+        if(cfg.track_offline):
+            os.environ["WANDB_MODE"] = "offline"
+        else:
+            os.environ["WANDB_MODE"] = "online"
+            wandb.login()
+            
         wandb.init(
             project=cfg.wandb_project_name,
             entity=cfg.wandb_entity,
