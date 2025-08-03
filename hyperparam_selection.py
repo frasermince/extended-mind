@@ -137,14 +137,18 @@ if __name__ == "__main__":
         ) / len(last_10_average_episodic_reward)
         # pprint.pprint(f"run_key: {result['run_key']}")
         if result["run_key"] not in accum_results:
-            accum_results[result["run_key"]] = [
-                {
-                    "success_rate": last_10_success_percentage,
-                    "average_episodic_reward": last_10_average_episodic_reward_percentage,
-                }
-            ]
+            accum_results[result["run_key"]] = {
+                "depth": result["network_depth"],
+                "width": result["network_width"],
+                "items": [
+                    {
+                        "success_rate": last_10_success_percentage,
+                        "average_episodic_reward": last_10_average_episodic_reward_percentage,
+                    }
+                ],
+            }
         else:
-            accum_results[result["run_key"]].append(
+            accum_results[result["run_key"]]["items"].append(
                 {
                     "success_rate": last_10_success_percentage,
                     "average_episodic_reward": last_10_average_episodic_reward_percentage,
@@ -152,13 +156,22 @@ if __name__ == "__main__":
             )
         # pprint.pprint(result)
         # pprint.pprint(last_10_success_rate)
-    for run_key, results in accum_results.items():
-        avg_success_rate = sum(result["success_rate"] for result in results) / len(
-            results
+
+    def capacity_key(result):
+        return (result[1]["depth"], result[1]["width"])
+
+    sorted_results = sorted(accum_results.items(), key=capacity_key)
+    for run_key, results in sorted_results:
+        # Sort results by capacity (assuming format "depthxwidth", e.g., "3x64")
+        items = accum_results[run_key]["items"]
+        avg_success_rate = sum(item["success_rate"] for item in items) / len(items)
+        avg_average_episodic_reward = sum(
+            item["average_episodic_reward"] for item in items
         )
         avg_average_episodic_reward = sum(
-            result["average_episodic_reward"] for result in results
-        ) / len(results)
+            item["average_episodic_reward"] for item in items
+        ) / len(items)
         pprint.pprint(f"run_key: {run_key}")
         pprint.pprint(f"avg_success_rate: {avg_success_rate}")
         pprint.pprint(f"avg_average_episodic_reward: {avg_average_episodic_reward}")
+        print()
