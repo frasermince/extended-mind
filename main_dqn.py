@@ -2,17 +2,13 @@
 import os
 import random
 import time
-from dataclasses import dataclass
 
 import flax
-import flax.linen as nn
 import gymnasium as gym
 import jax
 import jax.numpy as jnp
-import minigrid
 import numpy as np
 import optax
-import tyro
 from flax.training.train_state import TrainState
 
 from tqdm import tqdm
@@ -20,7 +16,8 @@ from tensorboardX import SummaryWriter
 
 from networks_jax import Network
 
-from env import TILE_PIXELS, PartialAndTotalRecordVideo
+from env import TILE_PIXELS
+from wrappers import PartialAndTotalRecordVideo
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
 
@@ -46,6 +43,8 @@ def make_env(
     show_grid_lines,
     agent_view_size,
     show_walls_pov,
+    generate_optimal_path,
+    show_optimal_path,
 ):
     def thunk():
         if capture_video and idx == 0:
@@ -56,6 +55,10 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
+                show_optimal_path=show_optimal_path,
+                seed=seed,
+                generate_optimal_path=generate_optimal_path,
+                show_optimal_path=show_optimal_path,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -69,6 +72,10 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
+                show_optimal_path=show_optimal_path,
+                seed=seed,
+                generate_optimal_path=generate_optimal_path,
+                show_optimal_path=show_optimal_path,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -106,7 +113,7 @@ def eval_env(cfg, envs):
 
     hardcoded_actions = cfg.hardcoded_actions
     action_index = 0
-    for global_step in tqdm(range(cfg.total_timesteps)):
+    for global_step in tqdm(range(cfg.training.total_timesteps)):
         # ALGO LOGIC: put action logic here
 
         actions = jnp.array([hardcoded_actions[action_index]])
@@ -142,6 +149,10 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
     print("Default JAX device:", jax.devices()[0])
     print("All available devices:", jax.devices())
 
+    # Print configuration for optimal path visibility
+    if cfg.generate_optimal_path:
+        print(f"Path generation enabled: {cfg.generate_optimal_path}")
+
     obs, _ = envs.reset(seed=cfg.seed)
     start_time = time.time()
 
@@ -151,7 +162,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
     terminations = np.array([False])
     truncations = np.array([False])
     q_network = Network(
-        feature_dims=cfg.dense_features,
+        feature_dims=cfg.training.dense_features,
         action_dim=envs.action_space.n,
     )
     # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
@@ -168,7 +179,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
         ),
-        tx=optax.adam(learning_rate=cfg.learning_rate),
+        tx=optax.adam(learning_rate=cfg.training.learning_rate),
     )
     print(
         "params",
@@ -184,7 +195,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
     )
 
     rb = ReplayBuffer(
-        cfg.buffer_size,
+        cfg.training.buffer_size,
         envs.observation_space["image"],
         envs.action_space,
         "cpu",
@@ -204,7 +215,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             q_state.target_params, next_observations
         )  # (batch_size, num_actions)
         q_next_target = jnp.max(q_next_target, axis=-1)  # (batch_size,)
-        next_q_value = rewards + (1 - dones) * cfg.gamma * q_next_target
+        next_q_value = rewards + (1 - dones) * cfg.training.gamma * q_next_target
 
         def mse_loss(params):
             q_pred = q_network.apply(params, observations)  # (batch_size, num_actions)
@@ -219,12 +230,12 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
         q_state = q_state.apply_gradients(grads=grads)
         return loss_value, q_pred, q_state
 
-    for global_step in tqdm(range(cfg.total_timesteps)):
+    for global_step in tqdm(range(cfg.training.total_timesteps)):
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
-            cfg.start_e,
-            cfg.end_e,
-            cfg.exploration_fraction * cfg.total_timesteps,
+            cfg.training.start_e,
+            cfg.training.end_e,
+            cfg.training.exploration_fraction * cfg.training.total_timesteps,
             global_step,
         )
 
@@ -331,9 +342,9 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
         obs = next_obs
 
         # ALGO LOGIC: training.
-        if global_step > cfg.learning_starts:
-            if global_step % cfg.train_frequency == 0:
-                data = rb.sample(cfg.batch_size)
+        if global_step > cfg.training.learning_starts:
+            if global_step % cfg.training.train_frequency == 0:
+                data = rb.sample(cfg.training.batch_size)
                 # perform a gradient-descent step
 
                 loss, old_val, q_state = update(
@@ -377,10 +388,10 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
                     )
 
             # update target network
-            if global_step % cfg.target_network_frequency == 0:
+            if global_step % cfg.training.target_network_frequency == 0:
                 q_state = q_state.replace(
                     target_params=optax.incremental_update(
-                        q_state.params, q_state.target_params, cfg.tau
+                        q_state.params, q_state.target_params, cfg.training.tau
                     )
                 )
 
@@ -394,7 +405,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
         episodic_returns = evaluate(
             model_path,
             make_env,
-            cfg.env_id,
+            cfg.training.env_id,
             eval_episodes=10,
             run_name=f"{run_name}-eval",
             Model=QNetwork,
@@ -408,7 +419,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
         if cfg.upload_model:
             from cleanrl_utils.huggingface import push_to_hub
 
-            repo_name = f"{cfg.env_id}-{cfg.exp_name}-seed{cfg.seed}"
+            repo_name = f"{cfg.training.env_id}-{cfg.exp_name}-seed{cfg.seed}"
             repo_id = f"{cfg.hf_entity}/{repo_name}" if cfg.hf_entity else repo_name
             push_to_hub(
                 cfg,
@@ -434,8 +445,8 @@ def main(cfg):
     assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.dense_features)
     run_name = (
-        f"{cfg.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}"
-        f"__{cfg.experiment_description}__learning_rate_{cfg.learning_rate}"
+        f"{cfg.training.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}"
+        f"__{cfg.experiment_description}__learning_rate_{cfg.training.learning_rate}"
         f"__dense_features_{dense_features_str}__agent_view_size_{cfg.agent_view_size}"
     )
 
@@ -487,14 +498,16 @@ def main(cfg):
 
     # env setup
     envs = make_env(
-        cfg.env_id,
+        cfg.training.env_id,
         cfg.seed,
         0,
         cfg.capture_video,
         run_name,
-        cfg.show_grid_lines,
+        cfg.render_options.show_grid_lines,
         cfg.agent_view_size,
-        cfg.show_walls_pov,
+        cfg.render_options.show_walls_pov,
+        cfg.generate_optimal_path,
+        cfg.render_options.show_optimal_path,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete

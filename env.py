@@ -1,138 +1,38 @@
-from gymnasium.core import ActType, ObsType, WrapperObsType
-from gymnasium import spaces
-from minigrid.core.constants import OBJECT_TO_IDX
+from gymnasium.core import ActType, ObsType
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Box, Goal, Lava, Wall, WorldObj
+from minigrid.core.world_object import Goal, Wall, WorldObj
 from minigrid.minigrid_env import MiniGridEnv
-from gymnasium.wrappers import TransformObservation
 from minigrid.utils.rendering import (
-    downsample,
     fill_coords,
-    highlight_img,
     point_in_circle,
     point_in_rect,
-    point_in_triangle,
-    rotate_fn,
 )
 
 import gymnasium as gym
 import numpy as np
 
-from minigrid.wrappers import ImgObsWrapper
 from typing import Any, SupportsFloat
 
 from enum import IntEnum
 
+from pathfinding import compute_pixel_dijkstra_path
+
 TILE_PIXELS = 8
-
-
-class PartialAndTotalRecordVideo(gym.wrappers.RecordVideo):
-    def _capture_frame(self):
-        assert self.recording, "Cannot capture a frame, recording wasn't started."
-
-        frame = self.render()
-        if isinstance(frame, list):
-            if len(frame) == 0:  # render was called
-                return
-            self.render_history += frame
-            frame = frame[-1]
-
-        if isinstance(frame, np.ndarray):
-            self.recorded_frames.append(frame)
-        else:
-            self.stop_recording()
-            logger.warn(
-                f"Recording stopped: expected type of frame returned by render to be a numpy array, got instead {type(frame)}."
-            )
-
-    @property
-    def enabled(self):
-        return self.recording
-
-    def render(self):
-        img_total = self.env.unwrapped.get_full_render(
-            self.env.unwrapped.highlight, self.env.unwrapped.tile_size, reveal_all=True
-        )
-        img_partial = self.env.unwrapped.get_pov_render(self.env.unwrapped.tile_size)
-        # img_partial has 1 channel; repeat to make it 3 channels
-        # Handles the fact that the partial view is grayscale
-        if img_partial.ndim == 3 and img_partial.shape[2] == 1:
-            img_partial = np.repeat(img_partial, 3, axis=2)
-
-        # INSERT_YOUR_CODE
-        # 8x the size of img_total and img_partial using nearest neighbor upsampling
-        def upsample(img, scale):
-            h, w, c = img.shape
-            return np.repeat(np.repeat(img, scale, axis=0), scale, axis=1)
-
-        img_total = upsample(img_total, 8)
-        img_partial = upsample(img_partial, 8)
-        # Stack img_total and img_partial vertically with a padding in between
-
-        # Ensure both images have the same width; if not, pad the smaller one
-        h1, w1, c1 = img_total.shape
-        h2, w2, c2 = img_partial.shape
-        pad_color = 255  # white padding
-
-        # Determine the max width and number of channels
-        max_w = max(w1, w2)
-        max_c = max(c1, c2)
-
-        def pad_img(img, target_w, target_c):
-            h, w, c = img.shape
-            # Pad width if needed, split between left and right
-            if w < target_w:
-                total_pad = target_w - w
-                pad_left = total_pad // 2
-                pad_right = total_pad - pad_left
-                pad_width = ((0, 0), (pad_left, pad_right), (0, 0))
-                img = np.pad(img, pad_width, mode="constant", constant_values=pad_color)
-            # Pad channels if needed
-            if c < target_c:
-                total_pad = target_c - c
-                pad_left = total_pad // 2
-                pad_right = total_pad - pad_left
-                pad_channels = ((0, 0), (0, 0), (pad_left, pad_right))
-                img = np.pad(
-                    img, pad_channels, mode="constant", constant_values=pad_color
-                )
-            return img
-
-        img_total_padded = pad_img(img_total, max_w, max_c)
-        img_partial_padded = pad_img(img_partial, max_w, max_c)
-
-        # Create a padding row (e.g., 10 pixels high)
-        pad_height = 10
-        padding = np.full((pad_height, max_w, max_c), pad_color, dtype=img_total.dtype)
-        padding_bottom = np.full((30, max_w, max_c), pad_color, dtype=img_total.dtype)
-
-        # Concatenate: total on top, then padding, then partial
-        render_out = [
-            np.concatenate(
-                [img_total_padded, padding, img_partial_padded, padding_bottom], axis=0
-            )
-        ]
-        if self.recording and isinstance(render_out, list):
-            self.recorded_frames += render_out
-
-        if len(self.render_history) > 0:
-            tmp_history = self.render_history
-            self.render_history = []
-            return tmp_history + render_out
-        else:
-            return render_out
 
 
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
+        self.seed = kwargs.pop("seed", 42)
         self.unique_tiles = kwargs.pop("unique_tiles", None)
         self.padded_unique_tiles = kwargs.pop("padded_unique_tiles", None)
         self.tile_global_indices = kwargs.pop("tile_global_indices", None)
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
+        self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
+        self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.seed = kwargs.pop("seed", None)
+        self.path_pixels = kwargs.pop("path_pixels", set())
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -152,23 +52,27 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
+        base_tile_hash = hash(grid.unique_tiles[i, j].tobytes()) if hasattr(grid, 'unique_tiles') else 0
+
         if reveal_all:
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
+                base_tile_hash,
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                grid.seed,
                 agent_dir,
+                tuple(sorted(grid.path_pixels))
             )
         else:
             key: tuple[Any, ...] = (
                 tile_size,
+                base_tile_hash,
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                grid.seed,
+                tuple(sorted(grid.path_pixels))
             )
 
         key = obj.encode() + key if obj else key
@@ -191,14 +95,31 @@ class DirectionlessGrid(Grid):
             else:
                 img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
+        if grid.generate_optimal_path or grid.show_optimal_path or reveal_all:
+            # Draw path pixels
+            tile_x_start = i * tile_size
+            tile_y_start = j * tile_size
+            
+            for px in range(tile_size):
+                for py in range(tile_size):
+                    global_px = tile_x_start + px
+                    global_py = tile_y_start + py
+                    
+                    if (global_px, global_py) in grid.path_pixels:
+                        if reveal_all:
+                            img[py, px] = [0, 0, 255]  # Blue in RGB
+                        else:
+                            img[py, px, 0] = 128  # Gray in grayscale (visible but distinct)
+
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
+            line_thickness = 0.0625
             if reveal_all:
-                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100, 100, 100))
-                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100, 100, 100))
+                fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
+                fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
             else:
-                fill_coords(img, point_in_rect(0, 0.0625, 0, 1), (100,))
-                fill_coords(img, point_in_rect(0, 1, 0, 0.0625), (100,))
+                fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
+                fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
         if obj is not None and obj.type != "wall" and reveal_all:
             obj.render(img)
@@ -227,6 +148,7 @@ class DirectionlessGrid(Grid):
         agent_dir: int | None = None,
         highlight_mask: np.ndarray | None = None,
         reveal_all: bool = False,
+        path: list[tuple[int, int]] | None = None,
     ) -> np.ndarray:
         """
         Render this grid at a given scale
@@ -297,6 +219,22 @@ class DirectionlessGrid(Grid):
             topX : topX + width, topY : topY + height, :
         ]
 
+        # Transform path pixels to local coordinates for the sliced grid
+        local_path_pixels = set()
+        for global_px, global_py in self.path_pixels:
+            # Convert global pixel coordinates to tile coordinates
+            tile_x = global_px // TILE_PIXELS
+            tile_y = global_py // TILE_PIXELS
+            
+            # Check if this tile is within the slice bounds
+            if topX <= tile_x < topX + width and topY <= tile_y < topY + height:
+                # Convert to local pixel coordinates within the slice
+                local_tile_x = tile_x - topX
+                local_tile_y = tile_y - topY
+                local_px = local_tile_x * TILE_PIXELS + (global_px % TILE_PIXELS)
+                local_py = local_tile_y * TILE_PIXELS + (global_py % TILE_PIXELS)
+                local_path_pixels.add((local_px, local_py))
+
         grid = DirectionlessGrid(
             width,
             height,
@@ -305,8 +243,11 @@ class DirectionlessGrid(Grid):
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
+            generate_optimal_path=self.generate_optimal_path,
+            show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
             seed=self.seed,
+            path_pixels=local_path_pixels,
         )
 
         for j in range(0, height):
@@ -324,36 +265,6 @@ class DirectionlessGrid(Grid):
         return grid
 
 
-class ImgObsPositionWrapper(gym.ObservationWrapper):
-    """
-    Use the image as the only observation output, no language/mission.
-
-    Example:
-        >>> import gymnasium as gym
-        >>> from minigrid.wrappers import ImgObsWrapper
-        >>> env = gym.make("MiniGrid-Empty-5x5-v0")
-        >>> obs, _ = env.reset()
-        >>> obs.keys()
-        dict_keys(['image', 'direction', 'mission'])
-        >>> env = ImgObsWrapper(env)
-        >>> obs, _ = env.reset()
-        >>> obs.shape
-        (7, 7, 3)
-    """
-
-    def __init__(self, env):
-        """A wrapper that makes image the only observation.
-
-        Args:
-            env: The environment to apply the wrapper
-        """
-        super().__init__(env)
-        self.observation_space = env.observation_space.spaces["image"]
-
-    def observation(self, obs):
-        return obs["image"], obs
-
-
 class Actions(IntEnum):
     left = 0
     forward = 1
@@ -364,23 +275,8 @@ class Actions(IntEnum):
 class SaltAndPepper(MiniGridEnv):
     """
     ## Description
-
-    Depending on the `obstacle_type` parameter:
-    - `Lava` - The agent has to reach the green goal square on the other corner
-        of the room while avoiding rivers of deadly lava which terminate the
-        episode in failure. Each lava stream runs across the room either
-        horizontally or vertically, and has a single crossing point which can be
-        safely used; Luckily, a path to the goal is guaranteed to exist. This
-        environment is useful for studying safety and safe exploration.
-    - otherwise - Similar to the `LavaCrossing` environment, the agent has to
-        reach the green goal square on the other corner of the room, however
-        lava is replaced by walls. This MDP is therefore much easier and maybe
-        useful for quickly testing your algorithms.
-
-    ## Mission Space
-    Depending on the `obstacle_type` parameter:
-    - `Lava` - "avoid the lava and get to the green goal square"
-    - otherwise - "find the opening and get to the green goal square"
+    - `Salt` - Accessible white tiles
+    - `Pepper` - Inaccessible black tiles
 
     ## Action Space
 
@@ -408,26 +304,16 @@ class SaltAndPepper(MiniGridEnv):
     The episode ends if any one of the following conditions is met:
 
     1. The agent reaches the goal.
-    2. The agent falls into lava.
-    3. Timeout (see `max_steps`).
+    2. Timeout (see `max_steps`).
 
     ## Registered Configurations
 
     S: size of the map SxS.
-    N: number of valid crossings across lava or walls from the starting position
+    N: number of valid crossings across walls from the starting position
     to the goal
 
-    - `Lava` :
-        - `MiniGrid-LavaCrossingS9N1-v0`
-        - `MiniGrid-LavaCrossingS9N2-v0`
-        - `MiniGrid-LavaCrossingS9N3-v0`
-        - `MiniGrid-LavaCrossingS11N5-v0`
-
-    - otherwise :
-        - `MiniGrid-SimpleCrossingS9N1-v0`
-        - `MiniGrid-SimpleCrossingS9N2-v0`
-        - `MiniGrid-SimpleCrossingS9N3-v0`
-        - `MiniGrid-SimpleCrossingS11N5-v0`
+    - `SaltAndPepper` :
+        - `MiniGrid-SaltAndPepper-v0-custom`
 
     """
 
@@ -451,6 +337,8 @@ class SaltAndPepper(MiniGridEnv):
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)
+        generate_optimal_path = kwargs.pop("generate_optimal_path", True)
+        show_optimal_path = kwargs.pop("show_optimal_path", True)
         agent_view_size = kwargs.pop("agent_view_size", 5)
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
@@ -465,6 +353,8 @@ class SaltAndPepper(MiniGridEnv):
         )
         self.show_grid_lines = show_grid_lines
         self.show_walls_pov = show_walls_pov
+        self.generate_optimal_path = generate_optimal_path
+        self.show_optimal_path = show_optimal_path
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
             low=0,
@@ -506,6 +396,9 @@ class SaltAndPepper(MiniGridEnv):
         return "get to the green goal square"
 
     def _gen_unique_tiles(self):
+        # Use a fixed random state for generating tiles to ensure consistency
+        tile_rng = np.random.RandomState(self.seed if self.seed is not None else 42)
+
         # subdivs = 3
         # Generate all unique random black and white pixels for all cells at once
         # Calculate section size (8x8 pixels)
@@ -513,10 +406,10 @@ class SaltAndPepper(MiniGridEnv):
         num_sections_per_tile = TILE_PIXELS
 
         # Generate random black/white sections for all cells
-        # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
         pad_width = int(np.ceil(self.agent_view_size / 2))
-        section_colors = self.np_random.choice(
+        # Generate the same pattern every time with the fixed seed
+        section_colors = tile_rng.choice(
             [0, 255],
             size=(
                 self.size + pad_width * 2,
@@ -526,6 +419,7 @@ class SaltAndPepper(MiniGridEnv):
             ),
             p=[0.10, 0.90],
         )
+        
         # Expand to 3 channels - all channels get the same value
         padded_tiles = np.stack([section_colors] * 3, axis=-1)
 
@@ -562,11 +456,14 @@ class SaltAndPepper(MiniGridEnv):
             height,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
+            generate_optimal_path=self.generate_optimal_path,
+            show_optimal_path=self.show_optimal_path,
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
             tile_global_indices=self.tile_global_indices,
             seed=self.seed,
+            path_pixels=set(),
         )
 
         # Generate the surrounding walls
@@ -580,13 +477,20 @@ class SaltAndPepper(MiniGridEnv):
         self.put_obj(Goal(), *self.goal_position)
 
         self.mission = "get to the green goal square"
-        img = self.grid.render(
-            TILE_PIXELS,
-            self.agent_pos,
-            self.agent_dir,
-            highlight_mask=None,
-            reveal_all=False,
-        )
+
+        if self.generate_optimal_path:
+            self.path = compute_pixel_dijkstra_path(self, TILE_PIXELS)
+
+            # Update grid with path pixels
+            if self.show_optimal_path and self.path:
+                self.grid.path_pixels = set(self.path)
+
+    def render_path_visualizations(self):
+        """Render both full and partial views with path visualization"""
+        full_img = self.get_full_render(highlight=False, tile_size=self.tile_size, reveal_all=True)
+        partial_img = self.get_pov_render(tile_size=self.tile_size)
+
+        return full_img, partial_img
 
     def get_view_exts(self, agent_view_size=None):
         """
@@ -636,6 +540,9 @@ class SaltAndPepper(MiniGridEnv):
         agent_view_size = agent_view_size or self.agent_view_size
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
+
+        # The path pixels are already properly transformed to local coordinates in the slice method
+        # No additional processing needed here
 
         # Process occluders and visibility
         # Note that this incurs some performance cost
@@ -747,8 +654,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move right
         elif action == self.actions.right:
@@ -759,8 +664,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move forward
         elif action == self.actions.forward:
@@ -771,8 +674,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Move backward
         elif action == self.actions.backward:
@@ -783,8 +684,6 @@ class SaltAndPepper(MiniGridEnv):
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
-            if fwd_cell is not None and fwd_cell.type == "lava":
-                terminated = True
 
         # Done action (not used by default)
         elif action == self.actions.done:
