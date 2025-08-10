@@ -5,10 +5,13 @@ import pandas as pd
 
 def walk_experiment_runs(base_dir="experiment_runs"):
     """
-    Recursively walks through the experiment_runs directory and yields the path to each metrics.pkl file,
-    along with the associated hyperparameters extracted from the folder names.
-    This version uses explicit nested for loops for each hyperparameter layer.
-    The traversal at each level is sorted by the value at that level (ascending).
+    Recursively walks through the `experiment_runs` directory and yields
+    the path to each `metrics.pkl` file, along with the associated
+    hyperparameters extracted from the folder names.
+
+    This version uses explicit nested for-loops for each hyperparameter
+    layer. The traversal at each level is sorted by the value at that
+    level (ascending).
     """
     if not os.path.isdir(base_dir):
         return
@@ -17,13 +20,13 @@ def walk_experiment_runs(base_dir="experiment_runs"):
     lr_dirs = [
         d
         for d in os.listdir(base_dir)
-        if d.startswith("learning_rate_") and os.path.isdir(os.path.join(base_dir, d))
+        if (d.startswith("learning_rate_") and os.path.isdir(os.path.join(base_dir, d)))
     ]
 
     def lr_key(d):
         try:
             return float(d.split("learning_rate_")[1])
-        except Exception:
+        except (IndexError, ValueError):
             return float("inf")
 
     for lr_dir in sorted(lr_dirs, key=lr_key):
@@ -44,7 +47,7 @@ def walk_experiment_runs(base_dir="experiment_runs"):
         def depth_key(d):
             try:
                 return int(d.split("network_depth_")[1])
-            except Exception:
+            except (IndexError, ValueError):
                 return float("inf")
 
         for depth_dir in sorted(depth_dirs, key=depth_key):
@@ -65,7 +68,7 @@ def walk_experiment_runs(base_dir="experiment_runs"):
             def width_key(d):
                 try:
                     return int(d.split("network_width_")[1])
-                except Exception:
+                except (IndexError, ValueError):
                     return float("inf")
 
             for width_dir in sorted(width_dirs, key=width_key):
@@ -86,7 +89,7 @@ def walk_experiment_runs(base_dir="experiment_runs"):
                 def seed_key(d):
                     try:
                         return int(d.split("seed_")[1])
-                    except Exception:
+                    except (IndexError, ValueError):
                         return float("inf")
 
                 for seed_dir in sorted(seed_dirs, key=seed_key):
@@ -97,8 +100,12 @@ def walk_experiment_runs(base_dir="experiment_runs"):
                         continue
 
                     metrics_path = os.path.join(seed_path, "metrics.pkl")
+                    optimal_metrics_path = os.path.join(
+                        seed_path, "metrics_optimal_path.pkl"
+                    )
 
                     if os.path.isfile(metrics_path):
+                        # Yield standard metrics
                         yield {
                             "metrics_path": metrics_path,
                             "learning_rate": learning_rate,
@@ -106,6 +113,19 @@ def walk_experiment_runs(base_dir="experiment_runs"):
                             "network_width": network_width,
                             "seed_num": seed_num,
                             "run_key": width_path,
+                            "path_variant": "standard",
+                        }
+
+                    # Yield optimal-path metrics as a separate item
+                    if os.path.isfile(optimal_metrics_path):
+                        yield {
+                            "metrics_path": optimal_metrics_path,
+                            "learning_rate": learning_rate,
+                            "network_depth": network_depth,
+                            "network_width": network_width,
+                            "seed_num": seed_num,
+                            "run_key": os.path.join(width_path, "optimal_path"),
+                            "path_variant": "optimal_path",
                         }
 
 
@@ -120,8 +140,8 @@ if __name__ == "__main__":
             metrics = pickle.load(f)
         df = pd.DataFrame(metrics["data"])
         last_10_success_rate = (
-            df[df["metric"] == "charts/success_rate"].iloc[-10:].value
-        )
+            df[df["metric"] == "charts/success_rate"].iloc[-10:]
+        ).value
         last_10_success_rate = last_10_success_rate.values.tolist()
         last_10_success_percentage = sum(last_10_success_rate) / len(
             last_10_success_rate
@@ -143,7 +163,9 @@ if __name__ == "__main__":
                 "items": [
                     {
                         "success_rate": last_10_success_percentage,
-                        "average_episodic_reward": last_10_average_episodic_reward_percentage,
+                        "average_episodic_reward": (
+                            last_10_average_episodic_reward_percentage
+                        ),
                     }
                 ],
             }
@@ -151,14 +173,16 @@ if __name__ == "__main__":
             accum_results[result["run_key"]]["items"].append(
                 {
                     "success_rate": last_10_success_percentage,
-                    "average_episodic_reward": last_10_average_episodic_reward_percentage,
+                    "average_episodic_reward": (
+                        last_10_average_episodic_reward_percentage
+                    ),
                 }
             )
         # pprint.pprint(result)
         # pprint.pprint(last_10_success_rate)
 
-    def capacity_key(result):
-        return (result[1]["depth"], result[1]["width"])
+    def capacity_key(item):
+        return (item[1]["depth"], item[1]["width"])
 
     sorted_results = sorted(accum_results.items(), key=capacity_key)
     import json
@@ -187,5 +211,5 @@ if __name__ == "__main__":
         )
 
     # Write results to JSON file in the same order
-    with open("hyperparam_results.json", "w") as json_file:
+    with open("hyperparam_results.json", "w", encoding="utf-8") as json_file:
         json.dump(results_list, json_file, indent=2)
