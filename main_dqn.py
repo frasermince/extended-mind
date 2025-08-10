@@ -425,7 +425,10 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
-    metrics_path = f"{runs_dir}/metrics.pkl"
+    if cfg.generate_optimal_path:
+        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
+    else:
+        metrics_path = f"{runs_dir}/metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
