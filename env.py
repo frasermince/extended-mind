@@ -52,7 +52,11 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
-        base_tile_hash = hash(grid.unique_tiles[i, j].tobytes()) if hasattr(grid, 'unique_tiles') else 0
+        base_tile_hash = (
+            hash(grid.unique_tiles[i, j].tobytes())
+            if hasattr(grid, "unique_tiles")
+            else 0
+        )
 
         if reveal_all:
             key: tuple[Any, ...] = (
@@ -63,7 +67,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
                 agent_dir,
-                tuple(sorted(grid.path_pixels))
+                tuple(sorted(grid.path_pixels)),
             )
         else:
             key: tuple[Any, ...] = (
@@ -72,7 +76,7 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                tuple(sorted(grid.path_pixels))
+                tuple(sorted(grid.path_pixels)),
             )
 
         key = obj.encode() + key if obj else key
@@ -99,24 +103,28 @@ class DirectionlessGrid(Grid):
             # Draw path pixels
             tile_x_start = i * tile_size
             tile_y_start = j * tile_size
-            
+
             for px in range(tile_size):
                 for py in range(tile_size):
                     global_px = tile_x_start + px
                     global_py = tile_y_start + py
-                    
+
                     if (global_px, global_py) in grid.path_pixels:
                         if reveal_all:
                             img[py, px] = [0, 0, 255]  # Blue in RGB
                         else:
-                            img[py, px, 0] = 128  # Gray in grayscale (visible but distinct)
+                            img[py, px, 0] = 0  # Black in grayscale
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
             line_thickness = 0.0625
             if reveal_all:
-                fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100))
-                fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100))
+                fill_coords(
+                    img, point_in_rect(0, line_thickness, 0, 1), (100, 100, 100)
+                )
+                fill_coords(
+                    img, point_in_rect(0, 1, 0, line_thickness), (100, 100, 100)
+                )
             else:
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
@@ -225,7 +233,7 @@ class DirectionlessGrid(Grid):
             # Convert global pixel coordinates to tile coordinates
             tile_x = global_px // TILE_PIXELS
             tile_y = global_py // TILE_PIXELS
-            
+
             # Check if this tile is within the slice bounds
             if topX <= tile_x < topX + width and topY <= tile_y < topY + height:
                 # Convert to local pixel coordinates within the slice
@@ -383,6 +391,12 @@ class SaltAndPepper(MiniGridEnv):
 
         self.tile_size = TILE_PIXELS
         self.size = size
+        (
+            self.unique_tiles,
+            self.padded_unique_tiles,
+            self.pad_width,
+            self.tile_global_indices,
+        ) = self._gen_unique_tiles()
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -419,7 +433,7 @@ class SaltAndPepper(MiniGridEnv):
             ),
             p=[0.10, 0.90],
         )
-        
+
         # Expand to 3 channels - all channels get the same value
         padded_tiles = np.stack([section_colors] * 3, axis=-1)
 
@@ -444,12 +458,6 @@ class SaltAndPepper(MiniGridEnv):
         assert width % 2 == 1 and height % 2 == 1  # odd size
 
         # Create an empty grid
-        (
-            self.unique_tiles,
-            self.padded_unique_tiles,
-            self.pad_width,
-            self.tile_global_indices,
-        ) = self._gen_unique_tiles()
 
         self.grid = DirectionlessGrid(
             width,
@@ -487,7 +495,9 @@ class SaltAndPepper(MiniGridEnv):
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""
-        full_img = self.get_full_render(highlight=False, tile_size=self.tile_size, reveal_all=True)
+        full_img = self.get_full_render(
+            highlight=False, tile_size=self.tile_size, reveal_all=True
+        )
         partial_img = self.get_pov_render(tile_size=self.tile_size)
 
         return full_img, partial_img
