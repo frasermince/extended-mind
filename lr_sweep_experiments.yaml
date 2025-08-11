@@ -1,11 +1,21 @@
-learning_rate:
-  - 1e-5
-  - 3e-5
-  - 1e-4
-  - 3e-4
+training.learning_rate:
   - 1e-3
-  - 3e-3
-  - 1e-2
+  - 5e-4
+  - 1e-4
+  - 5e-5
+  - 1e-5
+
+training.dense_features:
+  - [8, 8]
+  - [16, 16]
+  - [32, 32]
+  - [8, 8, 8]
+  - [16, 16, 16]
+  - [32, 32, 32]
+
+generate_optimal_path:
+  - true
+  - false
 
 wandb_project_name: "SaltAndPepper"
 wandb_entity: "glen-berseth"

@@ -109,11 +109,18 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     sweep_dict = {}
 
     for key, values in default_hyperparams.items():
-        # if specified in sweeps, then use sweep values, else, default values
-        if key in hyperparams_to_sweep:
-            sweep_dict[key] = hyperparams_to_sweep[key]
+        if isinstance(values, dict):
+            for nested_key, nested_value in values.items():
+                flat_key = f"{key}.{nested_key}"
+                if flat_key in hyperparams_to_sweep:
+                    sweep_dict[flat_key] = hyperparams_to_sweep[flat_key]
+                else:
+                    sweep_dict[flat_key] = nested_value
         else:
-            sweep_dict[key] = values
+            if key in hyperparams_to_sweep:
+                sweep_dict[key] = hyperparams_to_sweep[key]
+            else:
+                sweep_dict[key] = values
     
     sweep_dict["seed"] = seeds
 

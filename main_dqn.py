@@ -456,6 +456,7 @@ def main(cfg):
 
     runs_dir = os.path.join(
         "runs",
+        f"generate_optimal_path_{cfg.generate_optimal_path}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
