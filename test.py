@@ -8,32 +8,44 @@ import matplotlib.pyplot as plt
 # Test Configuration Fixture
 # ============================
 
+
 @pytest.fixture
 def test_config():
     cfg = OmegaConf.create()
-    cfg.env_id = "MiniGrid-SaltAndPepper-v0-custom"
-    cfg.seed = 42
-    cfg.num_envs = 1
+
     cfg.eval = True
-    cfg.eval_episodes = 1
-    cfg.eval_freq = 1000
+    cfg.train = False
+    cfg.seed = 42
     cfg.exp_name = "test"
-    cfg.experiment_description = "test"
-    cfg.learning_rate = 0.0003
-    cfg.feature_dim = 128
     cfg.agent_view_size = 3
     cfg.track = False
     cfg.capture_video = False
-    cfg.show_grid_lines = False
-    cfg.show_walls_pov = False
-    cfg.train = False
-    cfg.total_timesteps = 1000
-    cfg.dense_features = [16, 16]
+    cfg.generate_optimal_path = False
+    cfg.dry_run = False
+    cfg.experiment_description = "test"
+
+    cfg.training = OmegaConf.create()
+    cfg.training.env_id = "MiniGrid-SaltAndPepper-v0-custom"
+    cfg.training.num_envs = 1
+    cfg.training.eval_episodes = 1
+    cfg.training.eval_freq = 1000
+    cfg.training.learning_rate = 0.0003
+    cfg.training.feature_dim = 128
+    cfg.training.train = False
+    cfg.training.total_timesteps = 1000
+    cfg.training.dense_features = [16, 16]
+
+    cfg.render_options = OmegaConf.create()
+    cfg.render_options.show_grid_lines = False
+    cfg.render_options.show_walls_pov = False
+    cfg.render_options.show_optimal_path = False
+    return cfg
 
 
 # ============================
 # Test 1: Seeding Consistency
 # ============================
+
 
 def test_seeding(test_config):
     """
@@ -41,7 +53,7 @@ def test_seeding(test_config):
     and produces different observations with a different seed.
     """
     test_config.hardcoded_actions = [Actions.forward]
-    
+
     # Clone config with a different seed
     different_seed_test_config = test_config.copy()
     different_seed_test_config.seed = test_config.seed + 2
@@ -55,7 +67,9 @@ def test_seeding(test_config):
     # Reset all envs with appropriate seeds
     obs_1, _ = env_1.reset(seed=test_config.seed)
     obs_2, _ = env_2.reset(seed=test_config.seed)
-    obs_different_seed, _ = env_different_seed.reset(seed=different_seed_test_config.seed)
+    obs_different_seed, _ = env_different_seed.reset(
+        seed=different_seed_test_config.seed
+    )
 
     # Same seed -> same observations
     assert (obs_1["image"] == obs_2["image"]).all()
@@ -79,13 +93,14 @@ def test_seeding(test_config):
 # Test 2: Agent View Matches Ground Truth Tiles
 # ================================================
 
+
 def test_unique_tiles(test_config):
     """
     Verifies that the agent's observed local image matches the corresponding
     unique tile patches from the full-grid representation.
     """
     test_config.hardcoded_actions = [Actions.backward]
-    
+
     # Create and reset environment
     env = make_env(
         test_config.training.env_id,
@@ -127,19 +142,20 @@ def test_unique_tiles(test_config):
 # Test 3: Agent Hits Expected Walls
 # ====================================
 
+
 def test_wall_collisions(test_config):
     """
     Confirms that the agent's hardcoded movement patterns cause it to hit
     the expected corners (walls) of the grid.
-    
+
     This validates that movement, wall collisions, and environment boundaries
     are functioning correctly.
     """
     action_sets = [
-        ([Actions.left, Actions.forward] * 50, (1, 1)),       # Top-left corner
-        ([Actions.right, Actions.forward] * 50, (13, 1)),     # Top-right corner
-        ([Actions.left, Actions.backward] * 50, (1, 13)),     # Bottom-left corner
-        ([Actions.right, Actions.backward] * 50, (13, 13)),   # Bottom-right corner
+        ([Actions.left, Actions.forward] * 50, (1, 1)),  # Top-left corner
+        ([Actions.right, Actions.forward] * 50, (13, 1)),  # Top-right corner
+        ([Actions.left, Actions.backward] * 50, (1, 13)),  # Bottom-left corner
+        ([Actions.right, Actions.backward] * 50, (13, 13)),  # Bottom-right corner
     ]
 
     for action_set, expected_pos in action_sets:

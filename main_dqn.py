@@ -55,8 +55,6 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
-                show_optimal_path=show_optimal_path,
-                seed=seed,
                 generate_optimal_path=generate_optimal_path,
                 show_optimal_path=show_optimal_path,
             )
@@ -71,8 +69,6 @@ def make_env(
                 show_grid_lines=show_grid_lines,
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
-                seed=seed,
-                show_optimal_path=show_optimal_path,
                 seed=seed,
                 generate_optimal_path=generate_optimal_path,
                 show_optimal_path=show_optimal_path,
@@ -429,7 +425,10 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
-    metrics_path = f"{runs_dir}/metrics.pkl"
+    if cfg.generate_optimal_path:
+        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
+    else:
+        metrics_path = f"{runs_dir}/metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
@@ -442,8 +441,8 @@ def main(cfg):
 
     if cfg.dry_run:
         return
-    assert cfg.num_envs == 1, "vectorized envs are not supported at the moment"
-    dense_features_str = "_".join(str(f) for f in cfg.dense_features)
+    assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
+    dense_features_str = "_".join(str(f) for f in cfg.training.dense_features)
     run_name = (
         f"{cfg.training.env_id}__{cfg.exp_name}__seed_{cfg.seed}__{int(time.time())}"
         f"__{cfg.experiment_description}__learning_rate_{cfg.training.learning_rate}"
@@ -451,9 +450,9 @@ def main(cfg):
     )
 
     # Extract learning rate, network depth, and network width from cfg
-    learning_rate_str = str(cfg.learning_rate)
-    network_depth = len(cfg.dense_features)
-    network_width = cfg.dense_features[0] if cfg.dense_features else 0
+    learning_rate_str = str(cfg.training.learning_rate)
+    network_depth = len(cfg.training.dense_features)
+    network_width = cfg.training.dense_features[0] if cfg.training.dense_features else 0
 
     runs_dir = os.path.join(
         "runs",
@@ -465,13 +464,14 @@ def main(cfg):
     os.makedirs(runs_dir, exist_ok=True)
     if cfg.track:
         import wandb
+
         os.environ["WANDB_API_KEY"] = cfg.wandb_api_key
-        if(cfg.track_offline):
+        if cfg.track_offline:
             os.environ["WANDB_MODE"] = "offline"
         else:
             os.environ["WANDB_MODE"] = "online"
             wandb.login()
-            
+
         wandb.init(
             project=cfg.wandb_project_name,
             entity=cfg.wandb_entity,
