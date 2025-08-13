@@ -52,41 +52,44 @@ def test_seeding(test_config):
     Verifies that the environment is deterministic when using the same seed,
     and produces different observations with a different seed.
     """
-    test_config.hardcoded_actions = [Actions.forward]
+    for path in [True, False]:
+        test_config.generate_optimal_path = path
+        test_config.render_options.show_optimal_path = path
+        test_config.hardcoded_actions = [Actions.forward]
 
-    # Clone config with a different seed
-    different_seed_test_config = test_config.copy()
-    different_seed_test_config.seed = test_config.seed + 2
-    different_seed_test_config.hardcoded_actions = [Actions.forward]
+        # Clone config with a different seed
+        different_seed_test_config = test_config.copy()
+        different_seed_test_config.seed = test_config.seed + 2
+        different_seed_test_config.hardcoded_actions = [Actions.forward]
 
-    # Initialize environments
-    env_1 = main(test_config)
-    env_2 = main(test_config)
-    env_different_seed = main(different_seed_test_config)
+        # Initialize environments
+        env_1 = main(test_config)
+        env_2 = main(test_config)
+        env_different_seed = main(different_seed_test_config)
 
-    # Reset all envs with appropriate seeds
-    obs_1, _ = env_1.reset(seed=test_config.seed)
-    obs_2, _ = env_2.reset(seed=test_config.seed)
-    obs_different_seed, _ = env_different_seed.reset(
-        seed=different_seed_test_config.seed
-    )
+        # Reset all envs with appropriate seeds
+        obs_1, _ = env_1.reset(seed=test_config.seed)
+        obs_2, _ = env_2.reset(seed=test_config.seed)
+        obs_different_seed, _ = env_different_seed.reset(
+            seed=different_seed_test_config.seed
+        )
 
-    # Same seed -> same observations
-    assert (obs_1["image"] == obs_2["image"]).all()
+        # Same seed -> same observations
+        assert (obs_1["image"] == obs_2["image"]).all()
 
-    # Re-reset with same seed -> still deterministic
-    obs_2_reset, _ = env_2.reset(seed=test_config.seed)
-    assert (obs_2["image"] == obs_2_reset["image"]).all()
+        # Re-reset with same seed -> still deterministic
+        obs_2_reset, _ = env_2.reset(seed=test_config.seed)
+        assert (obs_2["image"] == obs_2_reset["image"]).all()
 
-    # Different seed -> different observations
-    assert (obs_1["image"] != obs_different_seed["image"]).any()
+        # Different seed -> different observations
+        assert (obs_1["image"] != obs_different_seed["image"]).any()
 
-    # Step forward and validate continued determinism
-    env_1.step(Actions.forward)
-    env_2.step(Actions.forward)
-    env_different_seed.step(Actions.forward)
-    assert (obs_1["image"] == obs_2["image"]).all()
-    assert (obs_1["image"] != obs_different_seed["image"]).any()
+        # Step forward and validate continued determinism
+        env_1.step(Actions.forward)
+        env_2.step(Actions.forward)
+        env_different_seed.step(Actions.forward)
+        assert (obs_1["image"] == obs_2["image"]).all()
+        assert (obs_1["image"] != obs_different_seed["image"]).any()
 
 
 # ================================================

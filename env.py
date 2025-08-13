@@ -32,7 +32,9 @@ class DirectionlessGrid(Grid):
         self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
+        self.path_widths = kwargs.pop("path_widths", None)
         self.path_pixels = kwargs.pop("path_pixels", set())
+        self.path_pixels_array = kwargs.pop("path_pixels_array", [])
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -110,10 +112,26 @@ class DirectionlessGrid(Grid):
                     global_py = tile_y_start + py
 
                     if (global_px, global_py) in grid.path_pixels:
+                        path_index = grid.path_pixels_array.index(
+                            (global_px, global_py)
+                        )
+                        x_width, y_width = grid.path_widths[path_index]
+
                         if reveal_all:
-                            img[py, px] = [0, 0, 255]  # Blue in RGB
+                            img[
+                                py - y_width : py + y_width + 1,
+                                px - x_width : px + x_width + 1,
+                            ] = [
+                                0,
+                                0,
+                                255,
+                            ]  # Blue in RGB
                         else:
-                            img[py, px, 0] = 0  # Black in grayscale
+                            img[
+                                py - y_width : py + y_width + 1,
+                                px - x_width : px + x_width + 1,
+                                0,
+                            ] = 0  # Black in grayscale
 
         # Draw the grid lines (top and left edges)
         if grid.show_grid_lines or reveal_all:
@@ -229,10 +247,14 @@ class DirectionlessGrid(Grid):
 
         # Transform path pixels to local coordinates for the sliced grid
         local_path_pixels = set()
-        for global_px, global_py in self.path_pixels:
+        local_path_widths = []
+        local_path_pixels_array = []
+        for index, (global_px, global_py) in enumerate(self.path_pixels_array):
             # Convert global pixel coordinates to tile coordinates
             tile_x = global_px // TILE_PIXELS
             tile_y = global_py // TILE_PIXELS
+
+            x_width, y_width = self.path_widths[index]
 
             # Check if this tile is within the slice bounds
             if topX <= tile_x < topX + width and topY <= tile_y < topY + height:
@@ -242,7 +264,8 @@ class DirectionlessGrid(Grid):
                 local_px = local_tile_x * TILE_PIXELS + (global_px % TILE_PIXELS)
                 local_py = local_tile_y * TILE_PIXELS + (global_py % TILE_PIXELS)
                 local_path_pixels.add((local_px, local_py))
-
+                local_path_widths.append((x_width, y_width))
+                local_path_pixels_array.append((local_px, local_py))
         grid = DirectionlessGrid(
             width,
             height,
@@ -256,6 +279,8 @@ class DirectionlessGrid(Grid):
             pad_width=self.pad_width,
             seed=self.seed,
             path_pixels=local_path_pixels,
+            path_widths=local_path_widths,
+            path_pixels_array=local_path_pixels_array,
         )
 
         for j in range(0, height):
@@ -487,11 +512,13 @@ class SaltAndPepper(MiniGridEnv):
         self.mission = "get to the green goal square"
 
         if self.generate_optimal_path:
-            self.path = compute_pixel_dijkstra_path(self, TILE_PIXELS)
+            self.path, self.path_widths = compute_pixel_dijkstra_path(self, TILE_PIXELS)
 
             # Update grid with path pixels
             if self.show_optimal_path and self.path:
                 self.grid.path_pixels = set(self.path)
+                self.grid.path_pixels_array = self.path
+                self.grid.path_widths = self.path_widths
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""

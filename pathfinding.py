@@ -13,29 +13,36 @@ from typing import List, Tuple
 PIXEL_PASSABLE_THRESHOLD = 127
 
 
-def compute_pixel_dijkstra_path(env, tile_pixels) -> List[Tuple[int, int]]:
+def compute_pixel_dijkstra_path(
+    env, tile_pixels
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
     """
     Compute Dijkstra's path at the pixel level (8x8 pixels per tile)
     """
     # Convert tile coordinates to pixel coordinates
     start_tile = tuple(env.agent_pos)
     goal_tile = env.goal_position
-    
+
     # Agent starts at center of its tile
-    start_px = (start_tile[0] * tile_pixels + tile_pixels // 2, 
-                start_tile[1] * tile_pixels + tile_pixels // 2)
-    goal_px = (goal_tile[0] * tile_pixels + tile_pixels // 2, 
-                goal_tile[1] * tile_pixels + tile_pixels // 2)
-    
+    start_px = (
+        start_tile[0] * tile_pixels + tile_pixels // 2,
+        start_tile[1] * tile_pixels + tile_pixels // 2,
+    )
+    goal_px = (
+        goal_tile[0] * tile_pixels + tile_pixels // 2,
+        goal_tile[1] * tile_pixels + tile_pixels // 2,
+    )
+
     width_px = env.grid.width * tile_pixels
     height_px = env.grid.height * tile_pixels
 
     visited = set()
     came_from = {}
+    widths = {}
     cost_so_far = {start_px: 0}
 
     heap = [(0, start_px)]
-    
+
     while heap:
         current_cost, current = heapq.heappop(heap)
 
@@ -48,34 +55,42 @@ def compute_pixel_dijkstra_path(env, tile_pixels) -> List[Tuple[int, int]]:
 
         px, py = current
         # 4-directional movement at pixel level
+        # Orders as left, right, down, up
         neighbors = [
-            (px-1, py), (px+1, py),
-            (px, py-1), (px, py+1)
+            (px - 1, py, 0, 1),
+            (px + 1, py, 0, 1),
+            (px, py - 1, 1, 0),
+            (px, py + 1, 1, 0),
         ]
-        
-        for npx, npy in neighbors:
+
+        for npx, npy, x_width, y_width in neighbors:
             if 0 <= npx < width_px and 0 <= npy < height_px:
                 # Check if this pixel is passable
                 if is_pixel_passable(env, npx, npy, tile_pixels):
                     new_cost = current_cost + 1
-                    if (npx, npy) not in cost_so_far or new_cost < cost_so_far[(npx, npy)]:
+                    if (npx, npy) not in cost_so_far or new_cost < cost_so_far[
+                        (npx, npy)
+                    ]:
                         cost_so_far[(npx, npy)] = new_cost
                         heapq.heappush(heap, (new_cost, (npx, npy)))
                         came_from[(npx, npy)] = current
+                        widths[(npx, npy)] = (x_width, y_width)
 
     # Reconstruct path
     if goal_px not in came_from and goal_px != start_px:
         return []  # No path found
-        
+
     current = goal_px
     path = [current]
+    path_widths = [widths.get(current)]
     while current != start_px:
+        path_widths.append(widths.get(current))
         current = came_from.get(current)
         if current is None:
             return []  # No path
         path.append(current)
 
-    return path[::-1]  # Start to goal
+    return path[::-1], path_widths[::-1]  # Start to goal
 
 
 def is_pixel_passable(env, px, py, tile_pixels) -> bool:
@@ -94,14 +109,19 @@ def is_pixel_passable(env, px, py, tile_pixels) -> bool:
     # Convert pixel coordinates to tile coordinates
     tile_x = px // tile_pixels
     tile_y = py // tile_pixels
-    
+
     # Check bounds
-    if tile_x < 0 or tile_x >= env.grid.width or tile_y < 0 or tile_y >= env.grid.height:
+    if (
+        tile_x < 0
+        or tile_x >= env.grid.width
+        or tile_y < 0
+        or tile_y >= env.grid.height
+    ):
         return False
-        
+
     # Check if tile contains a wall
     cell = env.grid.get(tile_x, tile_y)
     if isinstance(cell, Wall):
         return False
-    
+
     return True
