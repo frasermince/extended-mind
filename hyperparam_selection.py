@@ -3,7 +3,12 @@ import pickle
 import pandas as pd
 
 
-def walk_experiment_runs(base_dir="experiment_runs"):
+def walk_experiment_runs(
+    base_dirs=[
+        "thicker_path_runs/generate_optimal_path_False",
+        "thicker_path_runs/generate_optimal_path_True",
+    ]
+):
     """
     Recursively walks through the `experiment_runs` directory and yields
     the path to each `metrics.pkl` file, along with the associated
@@ -13,120 +18,124 @@ def walk_experiment_runs(base_dir="experiment_runs"):
     layer. The traversal at each level is sorted by the value at that
     level (ascending).
     """
-    if not os.path.isdir(base_dir):
-        return
+    for base_dir in base_dirs:
+        if not os.path.isdir(base_dir):
+            return
 
-    # Sort learning rates by value (ascending)
-    lr_dirs = [
-        d
-        for d in os.listdir(base_dir)
-        if (d.startswith("learning_rate_") and os.path.isdir(os.path.join(base_dir, d)))
-    ]
-
-    def lr_key(d):
-        try:
-            return float(d.split("learning_rate_")[1])
-        except (IndexError, ValueError):
-            return float("inf")
-
-    for lr_dir in sorted(lr_dirs, key=lr_key):
-        lr_path = os.path.join(base_dir, lr_dir)
-        try:
-            learning_rate = float(lr_dir.split("learning_rate_")[1])
-        except (IndexError, ValueError):
-            continue
-
-        # Sort network depths by value (ascending)
-        depth_dirs = [
+        # Sort learning rates by value (ascending)
+        lr_dirs = [
             d
-            for d in os.listdir(lr_path)
-            if d.startswith("network_depth_")
-            and os.path.isdir(os.path.join(lr_path, d))
+            for d in os.listdir(base_dir)
+            if (
+                d.startswith("learning_rate_")
+                and os.path.isdir(os.path.join(base_dir, d))
+            )
         ]
 
-        def depth_key(d):
+        def lr_key(d):
             try:
-                return int(d.split("network_depth_")[1])
+                return float(d.split("learning_rate_")[1])
             except (IndexError, ValueError):
                 return float("inf")
 
-        for depth_dir in sorted(depth_dirs, key=depth_key):
-            depth_path = os.path.join(lr_path, depth_dir)
+        for lr_dir in sorted(lr_dirs, key=lr_key):
+            lr_path = os.path.join(base_dir, lr_dir)
             try:
-                network_depth = int(depth_dir.split("network_depth_")[1])
+                learning_rate = float(lr_dir.split("learning_rate_")[1])
             except (IndexError, ValueError):
                 continue
 
-            # Sort network widths by value (ascending)
-            width_dirs = [
+            # Sort network depths by value (ascending)
+            depth_dirs = [
                 d
-                for d in os.listdir(depth_path)
-                if d.startswith("network_width_")
-                and os.path.isdir(os.path.join(depth_path, d))
+                for d in os.listdir(lr_path)
+                if d.startswith("network_depth_")
+                and os.path.isdir(os.path.join(lr_path, d))
             ]
 
-            def width_key(d):
+            def depth_key(d):
                 try:
-                    return int(d.split("network_width_")[1])
+                    return int(d.split("network_depth_")[1])
                 except (IndexError, ValueError):
                     return float("inf")
 
-            for width_dir in sorted(width_dirs, key=width_key):
-                width_path = os.path.join(depth_path, width_dir)
+            for depth_dir in sorted(depth_dirs, key=depth_key):
+                depth_path = os.path.join(lr_path, depth_dir)
                 try:
-                    network_width = int(width_dir.split("network_width_")[1])
+                    network_depth = int(depth_dir.split("network_depth_")[1])
                 except (IndexError, ValueError):
                     continue
 
-                # Sort seeds by value (ascending)
-                seed_dirs = [
+                # Sort network widths by value (ascending)
+                width_dirs = [
                     d
-                    for d in os.listdir(width_path)
-                    if d.startswith("seed_")
-                    and os.path.isdir(os.path.join(width_path, d))
+                    for d in os.listdir(depth_path)
+                    if d.startswith("network_width_")
+                    and os.path.isdir(os.path.join(depth_path, d))
                 ]
 
-                def seed_key(d):
+                def width_key(d):
                     try:
-                        return int(d.split("seed_")[1])
+                        return int(d.split("network_width_")[1])
                     except (IndexError, ValueError):
                         return float("inf")
 
-                for seed_dir in sorted(seed_dirs, key=seed_key):
-                    seed_path = os.path.join(width_path, seed_dir)
+                for width_dir in sorted(width_dirs, key=width_key):
+                    width_path = os.path.join(depth_path, width_dir)
                     try:
-                        seed_num = int(seed_dir.split("seed_")[1])
+                        network_width = int(width_dir.split("network_width_")[1])
                     except (IndexError, ValueError):
                         continue
 
-                    metrics_path = os.path.join(seed_path, "metrics.pkl")
-                    optimal_metrics_path = os.path.join(
-                        seed_path, "metrics_optimal_path.pkl"
-                    )
+                    # Sort seeds by value (ascending)
+                    seed_dirs = [
+                        d
+                        for d in os.listdir(width_path)
+                        if d.startswith("seed_")
+                        and os.path.isdir(os.path.join(width_path, d))
+                    ]
 
-                    if os.path.isfile(metrics_path):
-                        # Yield standard metrics
-                        yield {
-                            "metrics_path": metrics_path,
-                            "learning_rate": learning_rate,
-                            "network_depth": network_depth,
-                            "network_width": network_width,
-                            "seed_num": seed_num,
-                            "run_key": width_path,
-                            "path_variant": "standard",
-                        }
+                    def seed_key(d):
+                        try:
+                            return int(d.split("seed_")[1])
+                        except (IndexError, ValueError):
+                            return float("inf")
 
-                    # Yield optimal-path metrics as a separate item
-                    if os.path.isfile(optimal_metrics_path):
-                        yield {
-                            "metrics_path": optimal_metrics_path,
-                            "learning_rate": learning_rate,
-                            "network_depth": network_depth,
-                            "network_width": network_width,
-                            "seed_num": seed_num,
-                            "run_key": os.path.join(width_path, "optimal_path"),
-                            "path_variant": "optimal_path",
-                        }
+                    for seed_dir in sorted(seed_dirs, key=seed_key):
+                        seed_path = os.path.join(width_path, seed_dir)
+                        try:
+                            seed_num = int(seed_dir.split("seed_")[1])
+                        except (IndexError, ValueError):
+                            continue
+
+                        metrics_path = os.path.join(seed_path, "metrics.pkl")
+                        optimal_metrics_path = os.path.join(
+                            seed_path, "metrics_optimal_path.pkl"
+                        )
+
+                        if os.path.isfile(metrics_path):
+                            # Yield standard metrics
+                            yield {
+                                "metrics_path": metrics_path,
+                                "learning_rate": learning_rate,
+                                "network_depth": network_depth,
+                                "network_width": network_width,
+                                "seed_num": seed_num,
+                                "run_key": width_path,
+                                "path_variant": "standard",
+                            }
+
+                        # Yield optimal-path metrics as a separate item
+                        if os.path.isfile(optimal_metrics_path):
+                            yield {
+                                "metrics_path": optimal_metrics_path,
+                                "learning_rate": learning_rate,
+                                "network_depth": network_depth,
+                                "network_width": network_width,
+                                "seed_num": seed_num,
+                                "run_key": os.path.join(width_path, "optimal_path"),
+                                "path_variant": "optimal_path",
+                            }
 
 
 if __name__ == "__main__":
@@ -136,8 +145,13 @@ if __name__ == "__main__":
 
     # Example usage: print all found metrics paths and hyperparams
     for result in walk_experiment_runs():
-        with open(result["metrics_path"], "rb") as f:
-            metrics = pickle.load(f)
+        print(result["metrics_path"])
+        try:
+            with open(result["metrics_path"], "rb") as f:
+                metrics = pickle.load(f)
+        except Exception as e:
+            print(f"Error loading {result['metrics_path']}: {e}")
+            continue
         df = pd.DataFrame(metrics["data"])
         last_10_success_rate = (
             df[df["metric"] == "charts/success_rate"].iloc[-10:]
@@ -155,7 +169,8 @@ if __name__ == "__main__":
         last_10_average_episodic_reward_percentage = sum(
             last_10_average_episodic_reward
         ) / len(last_10_average_episodic_reward)
-        # pprint.pprint(f"run_key: {result['run_key']}")
+        print(result["run_key"])
+
         if result["run_key"] not in accum_results:
             accum_results[result["run_key"]] = {
                 "depth": result["network_depth"],
@@ -178,8 +193,6 @@ if __name__ == "__main__":
                     ),
                 }
             )
-        # pprint.pprint(result)
-        # pprint.pprint(last_10_success_rate)
 
     def capacity_key(item):
         return (item[1]["depth"], item[1]["width"])
@@ -189,12 +202,14 @@ if __name__ == "__main__":
 
     results_list = []
     for run_key, results in sorted_results:
+
         # Sort results by capacity (assuming format "depthxwidth", e.g., "3x64")
-        items = accum_results[run_key]["items"]
+        items = results["items"]
         avg_success_rate = sum(item["success_rate"] for item in items) / len(items)
         avg_average_episodic_reward = sum(
             item["average_episodic_reward"] for item in items
         ) / len(items)
+
         pprint.pprint(f"run_key: {run_key}")
         pprint.pprint(f"avg_success_rate: {avg_success_rate}")
         pprint.pprint(f"avg_average_episodic_reward: {avg_average_episodic_reward}")
@@ -211,5 +226,7 @@ if __name__ == "__main__":
         )
 
     # Write results to JSON file in the same order
-    with open("hyperparam_results.json", "w", encoding="utf-8") as json_file:
+    with open(
+        "thicker_path_hyperparam_results.json", "w", encoding="utf-8"
+    ) as json_file:
         json.dump(results_list, json_file, indent=2)
