@@ -57,7 +57,7 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job):
     job_seconds = to_seconds(max_time_per_job)
     return job_seconds // task_seconds
 
-def generate_script(task_confs, cluster_conf, env_path, exp_group_id, max_job_time, wandb_api_key):
+def generate_script(task_confs, cluster_conf, env_path, exp_group_id, max_job_time, wandb_api_key, run_folder=None):
     script = f"""#!/bin/bash
 #SBATCH --job-name=auto_slurm
 #SBATCH --output=auto_slurm_%j.out
@@ -83,7 +83,7 @@ cd {os.getcwd()}
     for a_task_conf in task_confs:
         script_params = ""
         for key, value in a_task_conf.items():
-            if key == "exp_group_id" or key == "exp_name" or key == "wandb_api_key":
+            if key == "exp_group_id" or key == "exp_name" or key == "wandb_api_key" or key == "run_folder":
                 continue
             
             if isinstance(value, bool):
@@ -97,7 +97,8 @@ cd {os.getcwd()}
                 script_params += f"{key}={shell_val} "
 
         
-        script += f"\npython main_dqn.py exp_group_id={shlex.quote(exp_group_id)} wandb_api_key={shlex.quote(wandb_api_key)} {script_params}"
+        run_folder_param = f"run_folder={shlex.quote(run_folder)} " if run_folder else ""
+        script += f"\npython main_dqn.py exp_group_id={shlex.quote(exp_group_id)} wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{script_params}"
 
     script += "\necho Done!"
 
@@ -154,6 +155,7 @@ def main():
     parser.add_argument('--exp-group-id', type=str, default="")
     parser.add_argument('--env-path', type=str, default=".venv")
     parser.add_argument('--wandb-api-key', type=str, default="")
+    parser.add_argument('--run-folder', type=str, default=None)
 
     args = parser.parse_args()
 
@@ -170,7 +172,7 @@ def main():
     num_jobs = 0
     for one_job_task_confs in task_confs_per_job:
         print(f"Generating script for job {num_jobs+1}...")
-        script = generate_script(one_job_task_confs, cluster_conf, args.env_path, exp_group_id, args.max_job_time, args.wandb_api_key)
+        script = generate_script(one_job_task_confs, cluster_conf, args.env_path, exp_group_id, args.max_job_time, args.wandb_api_key, args.run_folder)
         print(script)
         print("--------------------------------")
         if not args.dry_run:
