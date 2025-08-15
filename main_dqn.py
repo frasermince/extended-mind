@@ -455,13 +455,14 @@ def main(cfg):
     network_width = cfg.training.dense_features[0] if cfg.training.dense_features else 0
 
     runs_dir = os.path.join(
-        "runs",
+        cfg.run_folder,
         f"generate_optimal_path_{cfg.generate_optimal_path}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
         f"seed_{cfg.seed}",
     )
+    print(f"Runs directory: {runs_dir}")
     os.makedirs(runs_dir, exist_ok=True)
     if cfg.track:
         import wandb

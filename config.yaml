@@ -73,3 +73,5 @@ train: true
 dry_run: false
 
 exp_group_id: "test_id"
+
+run_folder: "runs"
