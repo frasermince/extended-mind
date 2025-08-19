@@ -10,6 +10,19 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
+# Prefer Helvetica-like sans fonts (Nature-style)
+matplotlib.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": [
+            "Helvetica",
+            "Arial",
+            "Nimbus Sans",
+            "DejaVu Sans",
+        ],
+    }
+)
+
 
 def _parse_learning_rate_from_run_key(run_key: str) -> str:
     """
@@ -42,6 +55,13 @@ def _parse_optimal_path_from_run_key(run_key: str) -> bool:
         return True
     if "generate_optimal_path_False" in run_key:
         return False
+    # Fallback: some aggregators may append a plain "optimal_path" marker
+    if (
+        "/optimal_path" in run_key
+        or run_key.endswith("optimal_path")
+        or "optimal_path" in run_key
+    ):
+        return True
     return False
 
 
@@ -67,6 +87,18 @@ def load_results(json_path: str) -> pd.DataFrame:
         run_key = row.get("run_key", "")
         lr_str = _parse_learning_rate_from_run_key(run_key)
         optimal_path = _parse_optimal_path_from_run_key(run_key)
+        # Optional new metrics
+        auc_val = row.get("average_reward_area_under_curve")
+        try:
+            auc_float = float(auc_val) if auc_val is not None else np.nan
+        except (TypeError, ValueError):
+            auc_float = np.nan
+        reward_curve_val = row.get("average_reward_curve", None)
+        reward_curve_standard_error_val = row.get(
+            "average_reward_curve_standard_error", None
+        )
+        # Optional per-seed curves at each timestep (list-of-lists [T][S])
+        all_avg_episodic_reward_val = row.get("all_avg_episodic_reward", None)
         records.append(
             {
                 "learning_rate_str": lr_str,
@@ -80,6 +112,11 @@ def load_results(json_path: str) -> pd.DataFrame:
                 "avg_average_episodic_reward": float(
                     row["avg_average_episodic_reward"]
                 ),
+                # New columns (may be NaN/None if not present)
+                "average_reward_area_under_curve": auc_float,
+                "average_reward_curve": reward_curve_val,
+                "average_reward_curve_standard_error": reward_curve_standard_error_val,
+                "all_avg_episodic_reward": all_avg_episodic_reward_val,
             }
         )
 
@@ -155,9 +192,6 @@ def _plot_heatmaps_for_metric(
                     text = f"{val * 100:.0f}%"
                 else:
                     text = f"{val:.3f}"
-                # import pdb
-
-                # pdb.set_trace()
                 ax.text(
                     j,
                     i,
@@ -180,6 +214,85 @@ def _plot_heatmaps_for_metric(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
+
+
+def _export_best_auc_per_seed_individual_plots(
+    df_all: pd.DataFrame,
+    output_dir: str,
+    ylabel: str = "Average Reward",
+) -> None:
+    """Export one PNG per seed for the best-AUC LR per (depth,width),
+    separated into subfolders for path visibility.
+
+    Expects columns:
+      - "average_reward_area_under_curve"
+      - "all_avg_episodic_reward" (list-of-lists [T][S])
+      - "learning_rate_str"
+    """
+    if df_all.empty:
+        return
+    if (
+        "average_reward_area_under_curve" not in df_all.columns
+        or "all_avg_episodic_reward" not in df_all.columns
+    ):
+        return
+
+    for opt_flag, subfolder in [(False, "pathless"), (True, "path")]:
+        df_panel = df_all[df_all["optimal_path"] == opt_flag]
+        if df_panel.empty:
+            continue
+        panel_dir = os.path.join(output_dir, subfolder)
+        os.makedirs(panel_dir, exist_ok=True)
+
+        groups = df_panel.groupby(["depth", "width"], dropna=False)
+        for (depth_val, width_val), sub in groups:
+            sub_valid = sub.dropna(
+                subset=[
+                    "average_reward_area_under_curve",
+                    "all_avg_episodic_reward",
+                ]
+            )
+            if sub_valid.empty:
+                continue
+            idx = sub_valid["average_reward_area_under_curve"].idxmax()
+            best_row = df_panel.loc[idx]
+
+            all_vals = best_row.get("all_avg_episodic_reward")
+            if not isinstance(all_vals, list) or len(all_vals) == 0:
+                continue
+            arr_ts = np.asarray(all_vals, dtype=float)
+            if arr_ts.ndim != 2:
+                continue
+            T, S = arr_ts.shape
+            x = np.arange(T, dtype=float)
+            lr_str = str(best_row.get("learning_rate_str", "unknown"))
+
+            for s in range(S):
+                fig, ax = plt.subplots(figsize=(6, 3.6))
+                ax.plot(x, arr_ts[:, s], linewidth=1.2, color="#4C78A8")
+                ax.set_xlabel("Time Step (x 10^3)")
+                ax.set_ylabel(ylabel)
+                title = (
+                    f"{depth_val}x{width_val} | LR={lr_str} | "
+                    f"{'Path' if opt_flag else 'No Path'} | Seed {s+1}"
+                )
+                ax.set_title(title)
+                ax.spines["top"].set_visible(False)
+                ax.spines["right"].set_visible(False)
+                desired_ticks = [0, 10000, 20000, 30000, 40000, 50000]
+                ticks_in_range = [t for t in desired_ticks if t <= int(x[-1])]
+                if ticks_in_range:
+                    ax.set_xticks(ticks_in_range)
+                    ax.set_xlim(0, ticks_in_range[-1])
+
+                fname = (
+                    f"best_auc_seed_{s+1}_depth_{int(depth_val)}_"
+                    f"width_{int(width_val)}_lr_{lr_str}.png"
+                )
+                outpath = os.path.join(panel_dir, fname)
+                fig.tight_layout()
+                fig.savefig(outpath, dpi=150, bbox_inches="tight")
+                plt.close(fig)
 
 
 def _plot_lines_vs_width(
@@ -206,9 +319,8 @@ def _plot_lines_vs_width(
         depths = sorted(sub["depth"].unique().tolist())
 
         for depth in depths:
-            sub_depth = (
-                sub[sub["depth"] == depth].sort_values("width").dropna(subset=[metric])
-            )
+            sub_depth = sub[sub["depth"] == depth]
+            sub_depth = sub_depth.sort_values("width").dropna(subset=[metric])
             ax.plot(
                 sub_depth["width"],
                 sub_depth[metric],
@@ -315,18 +427,22 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         raise ValueError("agg must be 'max' or 'mean'")
 
     # Per (depth,width,optimal_path) stats across learning rates
-    stats = (
-        df.groupby(["depth", "width", "optimal_path"])[metric]
-        .agg(mean=np.mean, std=np.std, count="count", max=np.max)
-        .reset_index()
-        .sort_values(["depth", "width", "optimal_path"])  # type: ignore[call-arg]
+    stats = df.groupby(["depth", "width", "optimal_path"])[metric].agg(
+        mean=np.mean,
+        sem=lambda x: (
+            float(np.std(x, ddof=1)) / np.sqrt(len(x)) if len(x) > 1 else float("nan")
+        ),
+        count="count",
+        max=np.max,
     )
+    stats = stats.reset_index()
+    stats = stats.sort_values(["depth", "width", "optimal_path"])  # type: ignore[call-arg]
 
     # Consistent capacity ordering
     capacities = (
         stats[["depth", "width"]]
         .drop_duplicates()
-        .sort_values(["depth", "width"])  # type: ignore[call-arg]
+        .sort_values(["depth", "width"])  # type: ignore
         .itertuples(index=False, name=None)
     )
     capacities = list(capacities)
@@ -339,11 +455,11 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         values=value_col,
         aggfunc="first",
     )
-    std_pivot = (
+    sem_pivot = (
         stats.pivot_table(
             index=["depth", "width"],
             columns="optimal_path",
-            values="std",
+            values="sem",
             aggfunc="first",
         )
         if show_error_bars
@@ -353,7 +469,9 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     def _get(pvt: pd.DataFrame | None, d: int, w: int, opt: bool) -> float:
         if pvt is None or (d, w) not in pvt.index or opt not in pvt.columns:
             return float("nan")
-        val = pvt.loc[(d, w), opt]
+        # Ensure we index with a tuple index correctly
+        idx_key = (d, w)
+        val = pvt.loc[idx_key, opt]
         return float(val) if pd.notna(val) else float("nan")
 
     # Bar heights
@@ -362,12 +480,12 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
 
     # Error bars (std across LRs)
     yerr_pathless = (
-        [_get(std_pivot, d, w, False) for d, w in capacities]
+        [_get(sem_pivot, d, w, False) for d, w in capacities]
         if show_error_bars
         else None
     )
     yerr_path = (
-        [_get(std_pivot, d, w, True) for d, w in capacities]
+        [_get(sem_pivot, d, w, True) for d, w in capacities]
         if show_error_bars
         else None
     )
@@ -404,11 +522,13 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         ),
     )
 
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.grid(axis="y", alpha=0.3)
+    ax.grid(False)
     ax.legend()
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -440,12 +560,9 @@ def _plot_combined_lines_by_lr(
     fig, ax = plt.subplots(figsize=(fig_width, 5))
 
     # Build a stable color mapping per (depth, width) capacity
-    pairs = (
-        df[["depth", "width"]]
-        .drop_duplicates()
-        .sort_values(["depth", "width"])  # type: ignore[call-arg]
-        .itertuples(index=False, name=None)
-    )
+    base_pairs = df[["depth", "width"]].drop_duplicates()
+    base_pairs = base_pairs.sort_values(["depth", "width"])  # type: ignore
+    pairs = base_pairs.itertuples(index=False, name=None)
     pairs = list(pairs)
     num_pairs = max(1, len(pairs))
     cmap = plt.get_cmap("tab20")
@@ -454,12 +571,9 @@ def _plot_combined_lines_by_lr(
     }
 
     # Each line corresponds to a unique (depth, width, optimal_path) triple
-    capacities = (
-        df[["depth", "width", "optimal_path"]]
-        .drop_duplicates()
-        .sort_values(["optimal_path", "depth", "width"])  # type: ignore
-        .itertuples(index=False, name=None)
-    )
+    caps_df = df[["depth", "width", "optimal_path"]].drop_duplicates()
+    caps_df = caps_df.sort_values(["optimal_path", "depth", "width"])  # type: ignore
+    capacities = caps_df.itertuples(index=False, name=None)
 
     for depth_val, width_val, optimal_path_val in capacities:
         sub = df[
@@ -522,7 +636,7 @@ def _build_pair_color_map(
     pairs_iter = (
         df_all[["depth", "width"]]
         .drop_duplicates()
-        .sort_values(["depth", "width"])  # type: ignore[call-arg]
+        .sort_values(["depth", "width"])  # type: ignore
         .itertuples(index=False, name=None)
     )
     pairs = list(pairs_iter)
@@ -561,12 +675,9 @@ def _plot_combined_lines_by_lr_filtered(
     if pair_to_color is None:
         pair_to_color = _build_pair_color_map(df_all)
 
-    capacities = (
-        df_filtered[["depth", "width"]]
-        .drop_duplicates()
-        .sort_values(["depth", "width"])  # type: ignore[call-arg]
-        .itertuples(index=False, name=None)
-    )
+    caps_df = df_filtered[["depth", "width"]].drop_duplicates()
+    caps_df = caps_df.sort_values(["depth", "width"])  # type: ignore
+    capacities = caps_df.itertuples(index=False, name=None)
 
     for depth_val, width_val in capacities:
         sub = df_filtered[
@@ -628,17 +739,15 @@ def _draw_combined_lines_on_ax(
     """
     x = np.arange(len(lr_strs))
 
-    capacities = (
-        df_filtered[["depth", "width"]]
-        .drop_duplicates()
-        .sort_values(["depth", "width"])  # type: ignore[call-arg]
-        .itertuples(index=False, name=None)
-    )
+    caps_df2 = df_filtered[["depth", "width"]].drop_duplicates()
+    caps_df2 = caps_df2.sort_values(["depth", "width"])  # type: ignore
+    capacities = caps_df2.itertuples(index=False, name=None)
 
     for depth_val, width_val in capacities:
         sub = df_filtered[
             (df_filtered["depth"] == depth_val) & (df_filtered["width"] == width_val)
         ]
+
         sub_map = {
             lr: v
             for lr, v in zip(
@@ -756,6 +865,489 @@ def _plot_side_by_side_path_vs_pathless(
             bbox_to_anchor=(1.02, 0.5),
             borderaxespad=0.0,
         )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+# def _plot_side_by_side_reward_curves_by_lr(
+#     df_all: pd.DataFrame,
+#     title_base: str,
+#     ylabel: str,
+#     output_dir: str,
+# ) -> None:
+#     """For each learning rate, draw side-by-side (pathless vs optimal_path)
+#     reward curves averaged over seeds for each (depth,width).
+
+#     Expects column "average_reward_curve" to contain a list of floats per row.
+#     """
+#     if df_all.empty:
+#         return
+#     if "average_reward_curve" not in df_all.columns:
+#         return
+
+#     lr_strs = _sort_unique(df_all["learning_rate_str"].unique().tolist())
+#     pair_to_color = _build_pair_color_map(df_all)
+
+#     def _mean_sem_curve(
+#         rows: pd.DataFrame,
+#     ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+#         """Compute per-timestep mean and SEM from list-of-lists.
+
+#         - Expected shape per row: [num_timesteps][num_seeds]
+#         - If row stores a 1D list, treat it as [num_timesteps]
+#         - If multiple rows exist (should not normally), prefer the first
+#         """
+#         # Collect candidate arrays
+#         arrays: List[np.ndarray] = []
+#         for v in rows["average_reward_curve"]:
+#             if isinstance(v, list) and len(v) > 0:
+#                 arr = np.asarray(v, dtype=float)
+#                 arrays.append(arr)
+#         if not arrays:
+#             return None, None
+
+#         # Use the first non-empty array (per (lr, depth, width, path) we expect one row)
+#         arr0 = arrays[0]
+#         # If 1D, no SEM available; return mean as the array itself
+#         if arr0.ndim == 1:
+#             mean_vals = arr0.astype(float)
+#             sem_vals = np.full_like(mean_vals, np.nan, dtype=float)
+#             return mean_vals, sem_vals
+
+#         # If 2D: shape [T, S]. Compute mean and SEM across seeds axis=1 per timestep
+#         if arr0.ndim == 2:
+#             # Handle NaNs per timestep
+#             with np.errstate(all="ignore"):
+#                 # counts per timestep ignoring NaNs
+#                 valid_counts = np.sum(~np.isnan(arr0), axis=1).astype(float)
+#                 means = np.nanmean(arr0, axis=1)
+#                 stds = np.nanstd(arr0, axis=1, ddof=1)
+#                 sems = np.divide(
+#                     stds,
+#                     np.sqrt(np.where(valid_counts > 0, valid_counts, np.nan)),
+#                 )
+
+#             return means, sems
+
+#         # Unexpected shape
+#         return None, None
+
+#     for lr in lr_strs:
+#         sub_lr = df_all[df_all["learning_rate_str"] == lr]
+#         if sub_lr.empty:
+#             continue
+
+#         df_path = sub_lr[sub_lr["optimal_path"] == True]  # noqa: E712
+#         df_pathless = sub_lr[sub_lr["optimal_path"] == False]  # noqa: E712
+
+#         base_width = 10
+#         fig, axes = plt.subplots(1, 2, figsize=(base_width, 4.5), squeeze=False)
+#         ax_left = axes[0, 0]
+#         ax_right = axes[0, 1]
+
+#         # Plot pathless panel
+#         if not df_pathless.empty:
+#             caps_df3 = df_pathless[["depth", "width"]].drop_duplicates()
+#             caps_df3 = caps_df3.sort_values(["depth", "width"])  # type: ignore[call-arg]
+#             caps = caps_df3.itertuples(index=False, name=None)
+#             for depth_val, width_val in caps:
+#                 rows = df_pathless[
+#                     (df_pathless["depth"] == depth_val)
+#                     & (df_pathless["width"] == width_val)
+#                 ]
+
+#                 mean_curve, sem_curve = _mean_sem_curve(rows)
+#                 if mean_curve is None:
+#                     continue
+#                 x = np.arange(mean_curve.shape[0])
+#                 ax_left.plot(
+#                     x,
+#                     mean_curve,
+#                     color=pair_to_color[(depth_val, width_val)],
+#                     linewidth=1.8,
+#                     alpha=0.9,
+#                     label=f"{depth_val}x{width_val}",
+#                 )
+#                 if sem_curve is not None and np.all(np.isfinite(sem_curve)):
+#                     ax_left.fill_between(
+#                         x,
+#                         mean_curve - sem_curve,
+#                         mean_curve + sem_curve,
+#                         color=pair_to_color[(depth_val, width_val)],
+#                         alpha=0.15,
+#                         linewidth=0,
+#                     )
+#             ax_left.set_title(f"{title_base} (pathless) | lr={lr}")
+#             ax_left.set_xlabel("timestep")
+#             ax_left.set_ylabel(ylabel)
+#             ax_left.grid(True, alpha=0.3)
+#         else:
+#             ax_left.set_visible(False)
+
+#         # Plot optimal_path panel
+#         if not df_path.empty:
+#             caps_df4 = df_path[["depth", "width"]].drop_duplicates()
+#             caps_df4 = caps_df4.sort_values(["depth", "width"])  # type: ignore[call-arg]
+#             caps = caps_df4.itertuples(index=False, name=None)
+#             for depth_val, width_val in caps:
+#                 rows = df_path[
+#                     (df_path["depth"] == depth_val) & (df_path["width"] == width_val)
+#                 ]
+#                 mean_curve, sem_curve = _mean_sem_curve(rows)
+#                 if mean_curve is None:
+#                     continue
+#                 x = np.arange(mean_curve.shape[0])
+#                 ax_right.plot(
+#                     x,
+#                     mean_curve,
+#                     color=pair_to_color[(depth_val, width_val)],
+#                     linewidth=1.8,
+#                     alpha=0.9,
+#                     label=f"{depth_val}x{width_val}",
+#                 )
+#                 if sem_curve is not None and np.all(np.isfinite(sem_curve)):
+#                     ax_right.fill_between(
+#                         x,
+#                         mean_curve - sem_curve,
+#                         mean_curve + sem_curve,
+#                         color=pair_to_color[(depth_val, width_val)],
+#                         alpha=0.15,
+#                         linewidth=0,
+#                     )
+#             ax_right.set_title(f"{title_base} (optimal_path) | lr={lr}")
+#             ax_right.set_xlabel("timestep")
+#             ax_right.set_ylabel(ylabel)
+#             ax_right.grid(True, alpha=0.3)
+#         else:
+#             ax_right.set_visible(False)
+
+#         # Match y-limits
+#         ymins: List[float] = []
+#         ymaxs: List[float] = []
+#         for ax in [ax_left, ax_right]:
+#             if ax.get_visible():
+#                 ymin, ymax = ax.get_ylim()
+#                 ymins.append(ymin)
+#                 ymaxs.append(ymax)
+#         if ymins and ymaxs:
+#             common_ylim = (min(ymins), max(ymaxs))
+#             for ax in [ax_left, ax_right]:
+#                 if ax.get_visible():
+#                     ax.set_ylim(*common_ylim)
+
+#         # Legend
+#         handles, labels = [], []
+#         if ax_left.get_visible():
+#             handles, labels = ax_left.get_legend_handles_labels()
+#         elif ax_right.get_visible():
+#             handles, labels = ax_right.get_legend_handles_labels()
+#         if handles and labels:
+#             fig.legend(
+#                 handles,
+#                 labels,
+#                 title="depth x width",
+#                 fontsize=8,
+#                 loc="center left",
+#                 bbox_to_anchor=(1.02, 0.5),
+#                 borderaxespad=0.0,
+#             )
+
+#         os.makedirs(output_dir, exist_ok=True)
+#         fig.tight_layout()
+#         outfile = os.path.join(
+#             output_dir,
+#             f"side_by_side_reward_curves_lr_{lr}.png",
+#         )
+#         fig.savefig(outfile, dpi=150, bbox_inches="tight")
+#         plt.close(fig)
+
+
+def _plot_best_auc_reward_curves_side_by_side(
+    df_all: pd.DataFrame,
+    title_base: str,
+    ylabel: str,
+    output_path: str,
+) -> None:
+    """Side-by-side panels (Path Not Visible vs Path Visible) of reward curves
+    where, for each (depth, width), we select the learning rate that maximizes
+    reward AUC within that panel.
+
+    Requires columns:
+      - "average_reward_area_under_curve"
+      - "average_reward_curve"
+    """
+    if df_all.empty:
+        return
+    if (
+        "average_reward_area_under_curve" not in df_all.columns
+        or "average_reward_curve" not in df_all.columns
+    ):
+        return
+
+    df_path = df_all[df_all["optimal_path"] == True]  # noqa: E712
+    df_pathless = df_all[df_all["optimal_path"] == False]  # noqa: E712
+
+    if df_path.empty and df_pathless.empty:
+        return
+
+    pair_to_color = _build_pair_color_map(df_all)
+
+    def _curve_mean_sem_from_row_val(
+        val: object,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        if not isinstance(val, list) or len(val) == 0:
+            return None, None
+        arr = np.asarray(val, dtype=float)
+        if arr.ndim == 1:
+            mean_vals = arr.astype(float)
+            sem_vals = np.full_like(mean_vals, np.nan, dtype=float)
+            return mean_vals, sem_vals
+        if arr.ndim == 2:
+            with np.errstate(all="ignore"):
+                valid_counts = np.sum(~np.isnan(arr), axis=1).astype(float)
+                means = np.nanmean(arr, axis=1)
+                stds = np.nanstd(arr, axis=1, ddof=1)
+                sems = np.divide(
+                    stds, np.sqrt(np.where(valid_counts > 0, valid_counts, np.nan))
+                )
+            return means, sems
+        return None, None
+
+    def _draw_panel(ax, df_panel: pd.DataFrame, title: str) -> None:
+        if df_panel.empty:
+            ax.set_visible(False)
+            return
+        groups = df_panel.groupby(["depth", "width"], dropna=False)
+        panel_max_x: Optional[int] = None
+        for (depth_val, width_val), sub in groups:
+            sub_valid = sub.dropna(
+                subset=[
+                    "average_reward_area_under_curve",
+                    "average_reward_curve",
+                    "average_reward_curve_standard_error",
+                ]
+            )
+            if sub_valid.empty:
+                continue
+            idx = sub_valid["average_reward_area_under_curve"].idxmax()
+            best_row = df_panel.loc[idx]
+
+            # mean_curve, sem_curve = _curve_mean_sem_from_row_val(
+            #     best_row.get("average_reward_curve")
+            # )
+            mean_curve = np.asarray(best_row["average_reward_curve"])
+            sem_curve = np.asarray(best_row["average_reward_curve_standard_error"])
+            if mean_curve is None:
+                continue
+            # Plot x in thousands of steps: raw step index divided by 1000
+            x = np.arange(mean_curve.shape[0], dtype=float) / 1000.0
+            panel_max_x = max(panel_max_x or 0, int(x[-1]))
+            color = pair_to_color[(int(depth_val), int(width_val))]
+            label = f"{int(depth_val)}x{int(width_val)}"  # capacity only; no LR
+            ax.plot(
+                x,
+                mean_curve,
+                linewidth=1.0,
+                alpha=0.9,
+                linestyle="-",
+                color=color,
+                label=label,
+            )
+            if sem_curve is not None and np.all(np.isfinite(sem_curve)):
+                ax.fill_between(
+                    x,
+                    mean_curve - sem_curve,
+                    mean_curve + sem_curve,
+                    color=color,
+                    alpha=0.15,
+                    linewidth=0,
+                )
+        ax.set_title(title)
+        ax.set_xlabel("Time Step (x 10^3)")
+        ax.set_ylabel("Average Reward Per Step")
+        # Specific x-ticks and limits (0..50), representing thousands of steps
+        max_x = panel_max_x if panel_max_x is not None else 50
+        desired_ticks = [0, 10, 20, 30, 40, 50]
+        ticks_in_range = [t for t in desired_ticks if t <= max_x]
+        if ticks_in_range:
+            ax.set_xticks(ticks_in_range)
+            ax.set_xlim(0, ticks_in_range[-1])
+        # Minimal frame: hide top and right spines
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    # Create figure and draw panels
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), squeeze=False)
+    ax_left = axes[0, 0]
+    ax_right = axes[0, 1]
+
+    _draw_panel(ax_left, df_pathless, "Path Not Visible")
+    _draw_panel(ax_right, df_path, "Path Visible")
+
+    # Match y-limits for comparability
+    ymins: List[float] = []
+    ymaxs: List[float] = []
+    for ax in [ax_left, ax_right]:
+        if ax.get_visible():
+            ymin, ymax = ax.get_ylim()
+            ymins.append(ymin)
+            ymaxs.append(ymax)
+    if ymins and ymaxs:
+        common_ylim = (min(ymins), max(ymaxs))
+        for ax in [ax_left, ax_right]:
+            if ax.get_visible():
+                ax.set_ylim(*common_ylim)
+
+    # Legend inside the right plot with a descriptive title
+    if ax_right.get_visible():
+        handles, labels = ax_right.get_legend_handles_labels()
+        if handles and labels:
+            ax_right.legend(
+                title="Network Size",
+                fontsize=8,
+                title_fontsize=9,
+                loc="upper left",
+                frameon=False,
+            )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_best_auc_per_seed_curves_side_by_side(
+    df_all: pd.DataFrame,
+    title_base: str,
+    ylabel: str,
+    output_path: str,
+) -> None:
+    """Side-by-side panels where, for each (depth,width), we pick the LR with
+    max AUC and plot all per-seed curves (thin), plus the mean curve (bold).
+
+    Requires columns in the input DataFrame:
+      - "average_reward_area_under_curve"
+      - "all_avg_episodic_reward" (shape [T][S])
+      - "average_reward_curve" (for the overlaid mean)
+    """
+    if df_all.empty:
+        return
+    if (
+        "average_reward_area_under_curve" not in df_all.columns
+        or "all_avg_episodic_reward" not in df_all.columns
+        or "average_reward_curve" not in df_all.columns
+    ):
+        return
+
+    df_path = df_all[df_all["optimal_path"] == True]  # noqa: E712
+    df_pathless = df_all[df_all["optimal_path"] == False]  # noqa: E712
+
+    if df_path.empty and df_pathless.empty:
+        return
+
+    pair_to_color = _build_pair_color_map(df_all)
+
+    def _draw_panel(ax, df_panel: pd.DataFrame, title: str) -> None:
+        if df_panel.empty:
+            ax.set_visible(False)
+            return
+        groups = df_panel.groupby(["depth", "width"], dropna=False)
+        panel_max_x: Optional[int] = None
+        for (depth_val, width_val), sub in groups:
+            sub_valid = sub.dropna(
+                subset=[
+                    "average_reward_area_under_curve",
+                    "all_avg_episodic_reward",
+                    "average_reward_curve",
+                ]
+            )
+            if sub_valid.empty:
+                continue
+            idx = sub_valid["average_reward_area_under_curve"].idxmax()
+            best_row = df_panel.loc[idx]
+
+            # Per-seed curves: list-of-lists [T][S]
+            all_vals = best_row.get("all_avg_episodic_reward")
+            if not isinstance(all_vals, list) or len(all_vals) == 0:
+                continue
+            arr_ts = np.asarray(all_vals, dtype=float)  # shape [T, S]
+            if arr_ts.ndim != 2:
+                continue
+            T = arr_ts.shape[0]
+            x = np.arange(T, dtype=float) / 1000.0
+            panel_max_x = max(panel_max_x or 0, int(x[-1]))
+
+            color = pair_to_color[(int(depth_val), int(width_val))]
+
+            # Plot each seed (thin, translucent)
+            for s in range(arr_ts.shape[1]):
+                ax.plot(
+                    x,
+                    arr_ts[:, s],
+                    linewidth=0.8,
+                    alpha=0.25,
+                    linestyle="-",
+                    color=color,
+                )
+
+            # Overlay mean curve (bold)
+            mean_curve = np.asarray(best_row["average_reward_curve"], dtype=float)
+            ax.plot(
+                x,
+                mean_curve,
+                linewidth=1.4,
+                alpha=0.95,
+                linestyle="-",
+                color=color,
+                label=f"{int(depth_val)}x{int(width_val)}",
+            )
+
+        ax.set_title(title)
+        ax.set_xlabel("Time Step (x 10^3)")
+        ax.set_ylabel(ylabel)
+        max_x = panel_max_x if panel_max_x is not None else 50
+        desired_ticks = [0, 10, 20, 30, 40, 50]
+        ticks_in_range = [t for t in desired_ticks if t <= max_x]
+        if ticks_in_range:
+            ax.set_xticks(ticks_in_range)
+            ax.set_xlim(0, ticks_in_range[-1])
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), squeeze=False)
+    ax_left = axes[0, 0]
+    ax_right = axes[0, 1]
+
+    _draw_panel(ax_left, df_pathless, "Path Not Visible (per-seed)")
+    _draw_panel(ax_right, df_path, "Path Visible (per-seed)")
+
+    # Match y-limits
+    ymins: List[float] = []
+    ymaxs: List[float] = []
+    for ax in [ax_left, ax_right]:
+        if ax.get_visible():
+            ymin, ymax = ax.get_ylim()
+            ymins.append(ymin)
+            ymaxs.append(ymax)
+    if ymins and ymaxs:
+        common_ylim = (min(ymins), max(ymaxs))
+        for ax in [ax_left, ax_right]:
+            if ax.get_visible():
+                ax.set_ylim(*common_ylim)
+
+    if ax_right.get_visible():
+        handles, labels = ax_right.get_legend_handles_labels()
+        if handles and labels:
+            ax_right.legend(
+                title="Network Size",
+                fontsize=8,
+                title_fontsize=9,
+                loc="upper left",
+                frameon=False,
+            )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout()
@@ -962,6 +1554,48 @@ def main() -> None:
         ),
     )
 
+    # Side-by-side AUC across learning rates (one line per capacity)
+    if "average_reward_area_under_curve" in df.columns:
+        _plot_side_by_side_path_vs_pathless(
+            df_all=df,
+            metric="average_reward_area_under_curve",
+            title="Avg Reward AUC across Learning Rates",
+            ylabel="reward AUC",
+            output_path=os.path.join(
+                args.outdir,
+                "side_by_side_avg_reward_auc_pathless_vs_optimal.png",
+            ),
+        )
+
+    # Best-AUC reward curves per (depth,width), side-by-side pathless vs path
+    _plot_best_auc_reward_curves_side_by_side(
+        df_all=df,
+        title_base="Avg Reward Curve at Best AUC LR",
+        ylabel="Average Reward",
+        output_path=os.path.join(
+            args.outdir,
+            "best_auc_reward_curves_side_by_side.png",
+        ),
+    )
+
+    # New: per-seed curves for the best-AUC LR per capacity
+    _plot_best_auc_per_seed_curves_side_by_side(
+        df_all=df,
+        title_base="Per-seed Avg Reward Curves at Best AUC LR",
+        ylabel="Average Reward",
+        output_path=os.path.join(
+            args.outdir,
+            "best_auc_per_seed_reward_curves_side_by_side.png",
+        ),
+    )
+
+    # Export individual per-seed plots into a folder
+    _export_best_auc_per_seed_individual_plots(
+        df_all=df,
+        output_dir=os.path.join(args.outdir, "best_auc_per_seed_individual"),
+        ylabel="Average Reward",
+    )
+
     # Grouped bars: Path vs No Path by capacity
     _plot_grouped_bars_path_vs_pathless_by_capacity(
         df=df,
@@ -982,6 +1616,17 @@ def main() -> None:
         output_path=os.path.join(
             args.outdir,
             "grouped_bars_avg_reward_path_vs_pathless_by_capacity.png",
+        ),
+        agg="max",
+    )
+    _plot_grouped_bars_path_vs_pathless_by_capacity(
+        df=df,
+        metric="average_reward_area_under_curve",
+        title="Avg Reward AUC by Architecture: Path vs No Path",
+        ylabel="Average Reward Per Step AUC",
+        output_path=os.path.join(
+            args.outdir,
+            "grouped_bars_avg_reward_auc_path_vs_pathless_by_capacity.png",
         ),
         agg="max",
     )
