@@ -1,12 +1,14 @@
 import os
 import pickle
 import pandas as pd
+import numpy as np
+from tqdm import tqdm
 
 
 def walk_experiment_runs(
     base_dirs=[
-        "thicker_path_runs/generate_optimal_path_False",
-        "thicker_path_runs/generate_optimal_path_True",
+        "/Users/frasermince/Downloads/extended_mind_runs/generate_optimal_path_True",
+        "/Users/frasermince/Downloads/extended_mind_runs/generate_optimal_path_False",
     ]
 ):
     """
@@ -138,7 +140,7 @@ def walk_experiment_runs(
                             }
 
 
-if __name__ == "__main__":
+def main():
     import pprint
 
     accum_results = {}
@@ -152,6 +154,7 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error loading {result['metrics_path']}: {e}")
             continue
+        print(result["run_key"])
         df = pd.DataFrame(metrics["data"])
         last_10_success_rate = (
             df[df["metric"] == "charts/success_rate"].iloc[-10:]
@@ -169,7 +172,15 @@ if __name__ == "__main__":
         last_10_average_episodic_reward_percentage = sum(
             last_10_average_episodic_reward
         ) / len(last_10_average_episodic_reward)
-        print(result["run_key"])
+
+        reward_sum = 0
+        average_reward_per_timestep = []
+        for i, reward_per_timestep in enumerate(
+            df[df["metric"] == "reward_per_timestep"]["value"].values.tolist()
+        ):
+            reward_sum += reward_per_timestep
+
+            average_reward_per_timestep.append(reward_sum / (i + 1))
 
         if result["run_key"] not in accum_results:
             accum_results[result["run_key"]] = {
@@ -181,6 +192,7 @@ if __name__ == "__main__":
                         "average_episodic_reward": (
                             last_10_average_episodic_reward_percentage
                         ),
+                        "average_reward_per_timestep": average_reward_per_timestep,
                     }
                 ],
             }
@@ -191,6 +203,7 @@ if __name__ == "__main__":
                     "average_episodic_reward": (
                         last_10_average_episodic_reward_percentage
                     ),
+                    "average_reward_per_timestep": average_reward_per_timestep,
                 }
             )
 
@@ -201,7 +214,7 @@ if __name__ == "__main__":
     import json
 
     results_list = []
-    for run_key, results in sorted_results:
+    for run_key, results in tqdm(sorted_results, desc="Processing results"):
 
         # Sort results by capacity (assuming format "depthxwidth", e.g., "3x64")
         items = results["items"]
@@ -210,6 +223,19 @@ if __name__ == "__main__":
             item["average_episodic_reward"] for item in items
         ) / len(items)
 
+        all_avg_episodic_reward = []
+        average_reward_per_timestep = []
+        for i in range(len(items[0]["average_reward_per_timestep"])):
+            values_at_i = [item["average_reward_per_timestep"][i] for item in items]
+            all_avg_episodic_reward.append(values_at_i)
+            average_reward_per_timestep.append(np.mean(values_at_i))
+
+        standard_error = np.std(all_avg_episodic_reward, ddof=1, axis=1) / np.sqrt(
+            len(all_avg_episodic_reward[0])
+        )
+        average_reward_area_under_curve = np.trapezoid(
+            average_reward_per_timestep, dx=1
+        ).item()
         pprint.pprint(f"run_key: {run_key}")
         pprint.pprint(f"avg_success_rate: {avg_success_rate}")
         pprint.pprint(f"avg_average_episodic_reward: {avg_average_episodic_reward}")
@@ -222,11 +248,17 @@ if __name__ == "__main__":
                 "width": results["width"],
                 "avg_success_rate": avg_success_rate,
                 "avg_average_episodic_reward": avg_average_episodic_reward,
+                "average_reward_area_under_curve": average_reward_area_under_curve,
+                "average_reward_curve": list(average_reward_per_timestep),
+                "average_reward_curve_standard_error": list(standard_error),
+                "all_avg_episodic_reward": all_avg_episodic_reward,
             }
         )
 
     # Write results to JSON file in the same order
-    with open(
-        "thicker_path_hyperparam_results.json", "w", encoding="utf-8"
-    ) as json_file:
+    with open("runs_2_hyperparam_results.json", "w", encoding="utf-8") as json_file:
         json.dump(results_list, json_file, indent=2)
+
+
+if __name__ == "__main__":
+    main()
