@@ -4,7 +4,7 @@ executed in sequence in one job if they can fit a specified time limit.
 
 We are assuming single gpu jobs for the most part.
 '''
-
+import glob
 import yaml
 import os
 from dateutil import parser as dateutil_parser
@@ -132,6 +132,12 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
 
     one_job_task_confs = []
     for tc in task_confs:
+
+        run_path = construct_run_path(tc, "runs")
+        if check_if_file_exists(run_path): 
+            continue
+        
+        print(f"Adding task: {run_path}")
         one_job_task_confs.append(tc)
         if len(one_job_task_confs) == num_tasks_per_job:
             yield one_job_task_confs
@@ -140,6 +146,38 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     if one_job_task_confs:
         yield one_job_task_confs
 
+
+def check_if_file_exists(file_path):
+    return len(glob.glob(file_path)) > 0
+
+
+def construct_run_path(tc, run_folder="runs"):
+
+    generate_optimal_path = tc['generate_optimal_path']
+    learning_rate = tc['training.learning_rate']
+    dense_features = tc['training.dense_features']
+    seed = tc['seed']
+    
+    if isinstance(learning_rate, str):
+        learning_rate = float(learning_rate)
+    
+    if learning_rate < 0.0001:
+        learning_rate_str = f"{learning_rate:.0e}"
+    else:
+        learning_rate_str = f"{learning_rate:.6f}".rstrip('0').rstrip('.')
+    
+    network_depth = len(dense_features)
+    network_width = dense_features[0]
+    
+    run_path = os.path.join(
+        run_folder,
+        f"generate_optimal_path_{generate_optimal_path}",
+        f"learning_rate_{learning_rate_str}",
+        f"network_depth_{network_depth}",
+        f"network_width_{network_width}",
+        f"seed_{seed}"
+    )
+    return run_path
 
 
 def main():

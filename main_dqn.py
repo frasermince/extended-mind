@@ -436,6 +436,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
 
 @hydra.main(config_path=".", config_name="config.yaml", version_base=None)
 def main(cfg):
+    start_time = time.time()
     print("Hydra loaded config:")
     print(cfg)
 
@@ -523,6 +524,13 @@ def main(cfg):
 
     envs.close()
     writer.close()
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(f"\n{'='*50}")
+    print(f"Total execution time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    print(f"{'='*50}")
+    
     return envs
 
 
