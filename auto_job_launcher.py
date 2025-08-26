@@ -4,7 +4,6 @@ executed in sequence in one job if they can fit a specified time limit.
 
 We are assuming single gpu jobs for the most part.
 '''
-import glob
 import yaml
 import os
 from dateutil import parser as dateutil_parser
@@ -134,7 +133,8 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     for tc in task_confs:
 
         run_path = construct_run_path(tc, "runs")
-        if check_if_file_exists(run_path): 
+        if check_if_file_exists(run_path):
+            
             continue
         
         print(f"Adding task: {run_path}")
@@ -148,7 +148,9 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
 
 
 def check_if_file_exists(file_path):
-    return len(glob.glob(file_path)) > 0
+    metrics_path = os.path.join(file_path, "metrics.pkl")
+    metrics_optimal_path = os.path.join(file_path, "metrics_optimal_path.pkl")
+    return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
 def construct_run_path(tc, run_folder="runs"):
