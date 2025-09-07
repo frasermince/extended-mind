@@ -14,11 +14,99 @@ import numpy as np
 
 from typing import Any, SupportsFloat
 
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
 from pathfinding import compute_pixel_dijkstra_path
 
 TILE_PIXELS = 8
+
+
+class PathDirection(IntEnum):
+    UP = 1
+    LEFT = 2
+    RIGHT = 3
+    DOWN = 4
+
+
+class Path:
+    def __init__(self, fragments):
+        self.fragments = fragments
+
+    def to_pixel_list(self):
+        pixel_list = []
+        path_widths = []
+        for fragment in self.fragments:
+            fragment_pixel_list, fragment_path_width = fragment.to_pixel_list()
+            pixel_list.extend(fragment_pixel_list)
+            path_widths.extend(fragment_path_width)
+        return pixel_list, path_widths
+
+
+class PathFragment:
+    def __init__(self, starting_point, direction, length):
+        self.starting_point = starting_point
+        self.direction = direction
+        self.length = length
+
+    def to_pixel_list(self):
+        pixel_list = []
+        if (
+            self.direction == PathDirection.LEFT
+            or self.direction == PathDirection.RIGHT
+        ):
+            path_width = [0, 1]
+        else:
+            path_width = [1, 0]
+        path_width = [path_width for i in range(self.length)]
+        for i in range(self.length):
+            if self.direction == PathDirection.LEFT:
+                pixel_list.append((self.starting_point[0] - i, self.starting_point[1]))
+            elif self.direction == PathDirection.RIGHT:
+                pixel_list.append((self.starting_point[0] + i, self.starting_point[1]))
+            elif self.direction == PathDirection.UP:
+                pixel_list.append((self.starting_point[0], self.starting_point[1] - i))
+            elif self.direction == PathDirection.DOWN:
+                pixel_list.append((self.starting_point[0], self.starting_point[1] + i))
+        return pixel_list, path_width
+
+
+shortest_path = Path(
+    [
+        PathFragment((60, 108), PathDirection.LEFT, 40),
+        PathFragment((20, 108), PathDirection.UP, 81),
+    ]
+)
+
+slightly_suboptimal_path = Path(
+    [
+        PathFragment((60, 108), PathDirection.RIGHT, 8),
+        PathFragment((68, 108), PathDirection.UP, 8),
+        PathFragment((68, 100), PathDirection.LEFT, 48),
+        PathFragment((20, 100), PathDirection.UP, 73),
+    ]
+)
+
+moderately_suboptimal_path = Path(
+    [
+        PathFragment((60, 108), PathDirection.RIGHT, 24),
+        PathFragment((84, 108), PathDirection.UP, 16),
+        PathFragment((84, 92), PathDirection.LEFT, 64),
+        PathFragment((20, 92), PathDirection.UP, 65),
+    ]
+)
+
+misleading_path = Path(
+    [
+        PathFragment((60, 108), PathDirection.RIGHT, 24),
+        PathFragment((84, 108), PathDirection.UP, 40),
+        PathFragment((84, 68), PathDirection.LEFT, 56),
+        PathFragment((28, 68), PathDirection.DOWN, 32),
+        PathFragment((28, 100), PathDirection.LEFT, 8),
+        PathFragment((20, 100), PathDirection.UP, 56),
+        PathFragment((20, 44), PathDirection.RIGHT, 64),
+        PathFragment((84, 44), PathDirection.UP, 32),
+    ]
+)
 
 
 class DirectionlessGrid(Grid):
@@ -305,6 +393,14 @@ class Actions(IntEnum):
     backward = 3
 
 
+class PathMode(StrEnum):
+    NONE = "NONE"
+    SHORTEST_PATH = "SHORTEST_PATH"
+    SLIGHTLY_SUBOPTIMAL_PATH = "SLIGHTLY_SUBOPTIMAL_PATH"
+    SUBOPTIMAL_PATH = "SUBOPTIMAL_PATH"
+    MISLEADING_PATH = "MISLEADING_PATH"
+
+
 class SaltAndPepper(MiniGridEnv):
     """
     ## Description
@@ -370,9 +466,9 @@ class SaltAndPepper(MiniGridEnv):
 
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)
-        generate_optimal_path = kwargs.pop("generate_optimal_path", True)
         show_optimal_path = kwargs.pop("show_optimal_path", True)
         agent_view_size = kwargs.pop("agent_view_size", 5)
+        path_mode = kwargs.pop("path_mode", "NONE")
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
         super().__init__(
             mission_space=mission_space,
@@ -386,8 +482,8 @@ class SaltAndPepper(MiniGridEnv):
         )
         self.show_grid_lines = show_grid_lines
         self.show_walls_pov = show_walls_pov
-        self.generate_optimal_path = generate_optimal_path
         self.show_optimal_path = show_optimal_path
+        self.path_mode = PathMode[path_mode]
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
             low=0,
@@ -472,6 +568,7 @@ class SaltAndPepper(MiniGridEnv):
         tile_global_indices = np.stack(
             np.meshgrid(x_indices, y_indices, indexing="ij"), axis=-1
         )
+
         return (
             padded_tiles[pad_width:-pad_width, pad_width:-pad_width, :, :],
             padded_tiles,
@@ -489,7 +586,6 @@ class SaltAndPepper(MiniGridEnv):
             height,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
-            generate_optimal_path=self.generate_optimal_path,
             show_optimal_path=self.show_optimal_path,
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
@@ -511,14 +607,21 @@ class SaltAndPepper(MiniGridEnv):
 
         self.mission = "get to the green goal square"
 
-        if self.generate_optimal_path:
-            self.path, self.path_widths = compute_pixel_dijkstra_path(self, TILE_PIXELS)
+        if self.path_mode == PathMode.SHORTEST_PATH:
+            self.path, self.path_widths = shortest_path.to_pixel_list()
+        elif self.path_mode == PathMode.SLIGHTLY_SUBOPTIMAL_PATH:
+            self.path, self.path_widths = slightly_suboptimal_path.to_pixel_list()
+        elif self.path_mode == PathMode.SUBOPTIMAL_PATH:
+            self.path, self.path_widths = moderately_suboptimal_path.to_pixel_list()
+        elif self.path_mode == PathMode.MISLEADING_PATH:
+            self.path, self.path_widths = misleading_path.to_pixel_list()
+        else:
+            self.path, self.path_widths = [], []
 
-            # Update grid with path pixels
-            if self.show_optimal_path and self.path:
-                self.grid.path_pixels = set(self.path)
-                self.grid.path_pixels_array = self.path
-                self.grid.path_widths = self.path_widths
+        if self.show_optimal_path and self.path:
+            self.grid.path_pixels = set(self.path)
+            self.grid.path_pixels_array = self.path
+            self.grid.path_widths = self.path_widths
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""
