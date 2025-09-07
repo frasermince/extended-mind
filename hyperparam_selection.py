@@ -3,14 +3,11 @@ import pickle
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import pprint
+import json
 
 
-def walk_experiment_runs(
-    base_dirs=[
-        "/Users/frasermince/Downloads/extended_mind_runs/generate_optimal_path_True",
-        "/Users/frasermince/Downloads/extended_mind_runs/generate_optimal_path_False",
-    ]
-):
+def walk_experiment_runs(base_dirs=None):
     """
     Recursively walks through the `experiment_runs` directory and yields
     the path to each `metrics.pkl` file, along with the associated
@@ -20,6 +17,13 @@ def walk_experiment_runs(
     layer. The traversal at each level is sorted by the value at that
     level (ascending).
     """
+    if base_dirs is None:
+        base_prefix = "/Users/frasermince/Downloads/runs 2/"
+        base_dirs = [
+            base_prefix + "generate_optimal_path_True",
+            base_prefix + "generate_optimal_path_False",
+        ]
+
     for base_dir in base_dirs:
         if not os.path.isdir(base_dir):
             return
@@ -42,8 +46,9 @@ def walk_experiment_runs(
 
         for lr_dir in sorted(lr_dirs, key=lr_key):
             lr_path = os.path.join(base_dir, lr_dir)
+            learning_rate_string = lr_dir.split("learning_rate_")[1]
             try:
-                learning_rate = float(lr_dir.split("learning_rate_")[1])
+                learning_rate = float(learning_rate_string)
             except (IndexError, ValueError):
                 continue
 
@@ -112,7 +117,8 @@ def walk_experiment_runs(
 
                         metrics_path = os.path.join(seed_path, "metrics.pkl")
                         optimal_metrics_path = os.path.join(
-                            seed_path, "metrics_optimal_path.pkl"
+                            seed_path,
+                            "metrics_optimal_path.pkl",
                         )
 
                         if os.path.isfile(metrics_path):
@@ -125,6 +131,7 @@ def walk_experiment_runs(
                                 "seed_num": seed_num,
                                 "run_key": width_path,
                                 "path_variant": "standard",
+                                "learning_rate_str": learning_rate_string,
                             }
 
                         # Yield optimal-path metrics as a separate item
@@ -135,26 +142,36 @@ def walk_experiment_runs(
                                 "network_depth": network_depth,
                                 "network_width": network_width,
                                 "seed_num": seed_num,
-                                "run_key": os.path.join(width_path, "optimal_path"),
+                                "run_key": os.path.join(
+                                    width_path,
+                                    "optimal_path",
+                                ),
                                 "path_variant": "optimal_path",
+                                "learning_rate_str": learning_rate_string,
                             }
 
 
-def main():
-    import pprint
-
+# Can skip if want to use existing results.json
+if __name__ == "__main__":
     accum_results = {}
+    depths = (2, 3)
+    widths = (4, 8, 16, 32)
+    missing_seeds = {}
+    learning_rates = ("1e-05", "5e-05", "0.0001", "0.0005", "0.001", "0.005", "0.01")
+    for optimal_path in (True, False):
+        for depth in depths:
+            for width in widths:
+                for lr in learning_rates:
+                    missing_seeds[(depth, width, lr, optimal_path)] = set(range(30))
 
     # Example usage: print all found metrics paths and hyperparams
-    for result in walk_experiment_runs():
-        print(result["metrics_path"])
+    for result in tqdm(walk_experiment_runs(), desc="Processing experiments"):
         try:
             with open(result["metrics_path"], "rb") as f:
                 metrics = pickle.load(f)
         except Exception as e:
             print(f"Error loading {result['metrics_path']}: {e}")
             continue
-        print(result["run_key"])
         df = pd.DataFrame(metrics["data"])
         last_10_success_rate = (
             df[df["metric"] == "charts/success_rate"].iloc[-10:]
@@ -181,7 +198,20 @@ def main():
             reward_sum += reward_per_timestep
 
             average_reward_per_timestep.append(reward_sum / (i + 1))
-
+        print(
+            result["network_depth"],
+            result["network_width"],
+            result["learning_rate_str"],
+            result["path_variant"] == "optimal_path",
+        )
+        missing_seeds[
+            (
+                result["network_depth"],
+                result["network_width"],
+                result["learning_rate_str"],
+                result["path_variant"] == "optimal_path",
+            )
+        ].remove(result["seed_num"])
         if result["run_key"] not in accum_results:
             accum_results[result["run_key"]] = {
                 "depth": result["network_depth"],
@@ -207,6 +237,10 @@ def main():
                 }
             )
 
+    print("Map of missing seeds:")
+    for key, value in missing_seeds.items():
+        print(f"{key}: {value}")
+
     def capacity_key(item):
         return (item[1]["depth"], item[1]["width"])
 
@@ -214,8 +248,8 @@ def main():
     import json
 
     results_list = []
+    max_learning_rate_auc = {}
     for run_key, results in tqdm(sorted_results, desc="Processing results"):
-
         # Sort results by capacity (assuming format "depthxwidth", e.g., "3x64")
         items = results["items"]
         avg_success_rate = sum(item["success_rate"] for item in items) / len(items)
@@ -241,24 +275,36 @@ def main():
         pprint.pprint(f"avg_average_episodic_reward: {avg_average_episodic_reward}")
         print()
         # Collect results for JSON output
-        results_list.append(
-            {
-                "run_key": run_key,
-                "depth": results["depth"],
-                "width": results["width"],
-                "avg_success_rate": avg_success_rate,
-                "avg_average_episodic_reward": avg_average_episodic_reward,
-                "average_reward_area_under_curve": average_reward_area_under_curve,
-                "average_reward_curve": list(average_reward_per_timestep),
-                "average_reward_curve_standard_error": list(standard_error),
-                "all_avg_episodic_reward": all_avg_episodic_reward,
+        record = {
+            "run_key": run_key,
+            "depth": results["depth"],
+            "width": results["width"],
+            "avg_success_rate": avg_success_rate,
+            "avg_average_episodic_reward": avg_average_episodic_reward,
+            "average_reward_area_under_curve": average_reward_area_under_curve,
+            "average_reward_curve": list(average_reward_per_timestep),
+            "average_reward_curve_standard_error": list(standard_error),
+            # "all_avg_episodic_reward": all_avg_episodic_reward,
+        }
+        if run_key not in max_learning_rate_auc:
+            max_learning_rate_auc[run_key] = {
+                "record": record,
+                "max_auc": average_reward_area_under_curve,
             }
-        )
+        elif (
+            average_reward_area_under_curve > max_learning_rate_auc[run_key]["max_auc"]
+        ):
+            max_learning_rate_auc[run_key] = {
+                "record": record,
+                "max_auc": average_reward_area_under_curve,
+            }
+    for key, value in max_learning_rate_auc.items():
+        results_list.append(value["record"])
 
     # Write results to JSON file in the same order
-    with open("runs_2_hyperparam_results.json", "w", encoding="utf-8") as json_file:
+    with open(
+        "results_max.json",
+        "w",
+        encoding="utf-8",
+    ) as json_file:
         json.dump(results_list, json_file, indent=2)
-
-
-if __name__ == "__main__":
-    main()

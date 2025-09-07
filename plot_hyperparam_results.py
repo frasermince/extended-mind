@@ -411,15 +411,21 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     df: pd.DataFrame,
     metric: str,
     title: str,
+    xlabel: str,
     ylabel: str,
     output_path: str,
+    dot_metric: Optional[str] = None,
     agg: str = "max",  # y-value per bar: "max" or "mean" across LRs
     show_error_bars: bool = True,  # toggle error bars
     capsize: float = 3.0,  # error bar cap size
     path_label: str = "Path",
     pathless_label: str = "No Path",
-    path_color: str = "#4C78A8",
-    pathless_color: str = "#F58518",
+    pathless_color: str = "#d62728",  # red
+    path_color: str = "#1f77b4",  # blue
+    show_sample_dots: bool = True,
+    sample_dot_size: float = 18.0,
+    sample_dot_alpha: float = 0.75,
+    sample_jitter: float = 0.08,
 ) -> None:
     if df.empty:
         return
@@ -427,13 +433,18 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         raise ValueError("agg must be 'max' or 'mean'")
 
     # Per (depth,width,optimal_path) stats across learning rates
-    stats = df.groupby(["depth", "width", "optimal_path"])[metric].agg(
-        mean=np.mean,
-        sem=lambda x: (
-            float(np.std(x, ddof=1)) / np.sqrt(len(x)) if len(x) > 1 else float("nan")
+    # For each (depth, width, optimal_path), find the row with the highest value of `metric`
+    idx = df.groupby(["depth", "width", "optimal_path"])[metric].idxmax()
+    best_rows = df.loc[idx]
+    stats = best_rows.groupby(["depth", "width", "optimal_path"]).agg(
+        mean=(metric, np.mean),
+        sem=(
+            (f"{error_metric}", "first")
+            if f"error_metric" in best_rows.columns
+            else (metric, lambda x: np.nan)
         ),
-        count="count",
-        max=np.max,
+        count=(metric, "count"),
+        max=(metric, np.max),
     )
     stats = stats.reset_index()
     stats = stats.sort_values(["depth", "width", "optimal_path"])  # type: ignore[call-arg]
@@ -471,8 +482,12 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
             return float("nan")
         # Ensure we index with a tuple index correctly
         idx_key = (d, w)
-        val = pvt.loc[idx_key, opt]
-        return float(val) if pd.notna(val) else float("nan")
+        try:
+            raw_val = pvt.loc[idx_key, opt]
+        except (KeyError, IndexError, TypeError, ValueError):
+            return float("nan")
+        coerced = pd.to_numeric(pd.Series([raw_val]), errors="coerce").iloc[0]
+        return float(coerced) if pd.notna(coerced) else float("nan")
 
     # Bar heights
     y_pathless = [_get(value_pivot, d, w, False) for d, w in capacities]
@@ -522,14 +537,157 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         ),
     )
 
+    # Overlay per-seed dots at the best LR per group, if a per-seed dot_metric is provided.
+    # Fallback: if dot_metric is None or missing/invalid, draw one dot per LR (previous behavior).
+    if show_sample_dots:
+        rng = np.random.default_rng(0)
+
+        def _best_lr_seed_values(sub_df: pd.DataFrame) -> Optional[List[float]]:
+            if sub_df.empty:
+                return None
+            # Choose best LR by argmax of the plotting metric
+            tmp = sub_df.copy()
+            tmp["_metric_numeric"] = pd.to_numeric(tmp[metric], errors="coerce")
+            tmp = tmp.dropna(subset=["_metric_numeric"])  # remove NaNs
+            if tmp.empty:
+                return None
+            best_idx = tmp["_metric_numeric"].idxmax()
+            if dot_metric is not None and dot_metric in sub_df.columns:
+                candidate = sub_df.loc[best_idx, dot_metric]
+                # Expect a list/array of per-seed values
+                if isinstance(candidate, (list, tuple, np.ndarray)):
+                    arr_list = (
+                        pd.to_numeric(pd.Series(list(candidate)), errors="coerce")
+                        .dropna()
+                        .astype(float)
+                        .tolist()
+                    )
+                    return arr_list if len(arr_list) > 0 else None
+            # Fallback: one value (previous behavior)
+            raw_val = tmp.loc[best_idx, "_metric_numeric"]
+            try:
+                best_val = float(raw_val)
+            except (TypeError, ValueError):
+                return None
+            return [best_val]
+
+        for idx_cap, (d_val, w_val) in enumerate(capacities):
+            # Pathless (left bar)
+            sub_left = df[
+                (df["depth"] == d_val)
+                & (df["width"] == w_val)
+                & (df["optimal_path"] == False)  # noqa: E712
+            ]
+            left_vals_list = _best_lr_seed_values(sub_left)
+            if left_vals_list is None:
+                # If no per-seed and no best value, fallback to all LR values as dots
+                vals_fallback = (
+                    pd.to_numeric(sub_left[metric], errors="coerce").dropna().to_numpy()
+                )
+                left_vals = vals_fallback if vals_fallback.size > 0 else None
+            else:
+                left_vals = np.asarray(left_vals_list, dtype=float)
+            if left_vals is not None and left_vals.size > 0:
+                xs_left = (
+                    x[idx_cap]
+                    - bar_width / 2
+                    + rng.uniform(-sample_jitter, sample_jitter, size=left_vals.size)
+                )
+                ax.scatter(
+                    xs_left,
+                    left_vals,
+                    s=sample_dot_size,
+                    color=pathless_color,
+                    edgecolors="white",
+                    linewidths=0.4,
+                    alpha=sample_dot_alpha,
+                    zorder=4,
+                )
+
+            # Path (right bar)
+            sub_right = df[
+                (df["depth"] == d_val)
+                & (df["width"] == w_val)
+                & (df["optimal_path"] == True)  # noqa: E712
+            ]
+            right_vals_list = _best_lr_seed_values(sub_right)
+            if right_vals_list is None:
+                vals_fallback = (
+                    pd.to_numeric(sub_right[metric], errors="coerce")
+                    .dropna()
+                    .to_numpy()
+                )
+                right_vals = vals_fallback if vals_fallback.size > 0 else None
+            else:
+                right_vals = np.asarray(right_vals_list, dtype=float)
+            if right_vals is not None and right_vals.size > 0:
+                xs_right = (
+                    x[idx_cap]
+                    + bar_width / 2
+                    + rng.uniform(-sample_jitter, sample_jitter, size=right_vals.size)
+                )
+                ax.scatter(
+                    xs_right,
+                    right_vals,
+                    s=sample_dot_size,
+                    color=path_color,
+                    edgecolors="white",
+                    linewidths=0.4,
+                    alpha=sample_dot_alpha,
+                    zorder=4,
+                )
+
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
     ax.grid(False)
     ax.legend()
+
+    # Ensure the y-axis upper limit ends at the next major tick above data max
+    try:
+
+        def _series_upper_max(y_vals, y_errs):
+            y_arr = np.asarray(y_vals, dtype=float)
+            if y_errs is None:
+                err_arr = np.zeros_like(y_arr)
+            else:
+                err_arr = np.asarray(y_errs, dtype=float)
+                # Treat non-finite errors as zero to avoid shrinking the max
+                err_arr[~np.isfinite(err_arr)] = 0.0
+            # Ignore non-finite y values
+            y_arr[~np.isfinite(y_arr)] = np.nan
+            upper = y_arr + np.where(np.isfinite(y_arr), err_arr, 0.0)
+            return np.nanmax(upper) if np.any(np.isfinite(upper)) else np.nan
+
+        ymax_data = np.nanmax(
+            [
+                _series_upper_max(y_pathless, yerr_pathless),
+                _series_upper_max(y_path, yerr_path),
+            ]
+        )
+
+        ticks = ax.get_yticks()
+        if len(ticks) >= 2 and np.isfinite(ymax_data):
+            # Find the first tick strictly greater than the data max
+            higher_ticks = [t for t in ticks if t > ymax_data + 1e-12]
+            if higher_ticks:
+                new_top = higher_ticks[0]
+            else:
+                # Extend by one tick step if no higher tick is present
+                steps = np.diff(ticks)
+                # Use median positive step to be robust to irregular spacing
+                pos_steps = steps[steps > 0]
+                step = np.median(pos_steps) if pos_steps.size > 0 else steps[-1]
+                new_top = ticks[-1] + step
+            bottom, _ = ax.get_ylim()
+            ax.set_ylim(bottom, new_top)
+    except (ValueError, TypeError, RuntimeError, FloatingPointError):
+        # If anything goes wrong, fall back silently to default autoscaling
+        pass
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout()
@@ -1601,6 +1759,7 @@ def main() -> None:
         df=df,
         metric="avg_success_rate",
         title="Success Rate by Architecture: Path vs No Path",
+        xlabel="Network Size",
         ylabel="success rate",
         output_path=os.path.join(
             args.outdir,
@@ -1612,6 +1771,7 @@ def main() -> None:
         df=df,
         metric="avg_average_episodic_reward",
         title="Avg Reward by Architecture: Path vs No Path",
+        xlabel="Network Size",
         ylabel="avg episodic reward",
         output_path=os.path.join(
             args.outdir,
@@ -1623,7 +1783,8 @@ def main() -> None:
         df=df,
         metric="average_reward_area_under_curve",
         title="Avg Reward AUC by Architecture: Path vs No Path",
-        ylabel="Average Reward Per Step AUC",
+        xlabel="Network Size",
+        ylabel="Total Reward",
         output_path=os.path.join(
             args.outdir,
             "grouped_bars_avg_reward_auc_path_vs_pathless_by_capacity.png",
