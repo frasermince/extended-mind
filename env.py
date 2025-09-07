@@ -617,6 +617,8 @@ class SaltAndPepper(MiniGridEnv):
             self.path, self.path_widths = misleading_path.to_pixel_list()
         else:
             self.path, self.path_widths = [], []
+        if self.generate_optimal_path:
+            self.path, self.path_widths = shortest_path.to_pixel_list()
 
         if self.show_optimal_path and self.path:
             self.grid.path_pixels = set(self.path)
