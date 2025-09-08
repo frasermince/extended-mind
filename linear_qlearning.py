@@ -20,26 +20,39 @@ class LinearQNetworkNumpy:
         self.obs_dim = obs_dim
         self.num_actions = num_actions
         key = jax.random.PRNGKey(seed)
-        self.params = nn.initializers.lecun_normal()(key, (obs_dim, num_actions)) # this is flax's default layer init
+        weight = nn.initializers.lecun_normal()(key, (obs_dim, num_actions))
+        bias = jnp.zeros(num_actions)
+        
+        self.params = {
+            'weight': weight,
+            'bias': bias
+        }
     
     def apply(self, x: jnp.ndarray):
-        return jnp.dot(x, self.params)
+        return jnp.dot(x, self.params['weight']) + self.params['bias']
     
 
 
 @jax.jit
-def closed_form_q_update(params: jnp.ndarray, x: jnp.ndarray, a: jnp.ndarray, r: jnp.ndarray, x_next: jnp.ndarray, done: jnp.bool_, discount: float, step_size: float):
+def closed_form_q_update(weight: jnp.ndarray, bias: jnp.ndarray, x: jnp.ndarray, a: jnp.ndarray, r: jnp.ndarray, x_next: jnp.ndarray, done: jnp.bool_, discount: float, step_size: float):
 
-    q_values = jnp.dot(x, params)  # get q values for the state
+    q_values = jnp.dot(x, weight) + bias  # get q values for the state
     q_curr = q_values[a]  # select the q value for the action taken
-    q_next_values = jnp.dot(x_next, params)
+    q_next_values = jnp.dot(x_next, weight) + bias
     q_next_max = jnp.where(done, 0.0, jnp.max(q_next_values))  # if done, q_next_target is 0, otherwise it is the max q value of the next state
     td_error = (r + discount * q_next_max) - q_curr  # the classic td error
-    gradient = jnp.outer(x, td_error)  # outer product gives us the gradient matrix
-    new_params = params + step_size * gradient # update the parameters
+    
+    # Compute gradients for weight and bias
+    weight_gradient = jnp.outer(x, td_error)  # outer product gives us the gradient matrix
+    bias_gradient = td_error  # bias gradient is just the td_error
+    
+    # Update parameters
+    new_weight = weight + step_size * weight_gradient
+    new_bias = bias + step_size * bias_gradient
+    
     loss = 0.5 * jnp.square(td_error)  # return the squared td error, for record keeping
     
-    return new_params, loss
+    return new_weight, new_bias, loss
 
 
 class NumpyQLearningAgent:
@@ -93,7 +106,19 @@ class NumpyQLearningAgent:
     def update_q_values(self, x: jnp.ndarray, a: jnp.ndarray, r: jnp.ndarray, x_next: jnp.ndarray, done: jnp.bool_, discount: float):
         x = self._agent_observation_transform(x)
         x_next = self._agent_observation_transform(x_next)
-        self.linear_q_network.params, loss = closed_form_q_update(self.linear_q_network.params, x, a, r, x_next, done, self.discount, self.step_size)
+        
+        weight = self.linear_q_network.params['weight']
+        bias = self.linear_q_network.params['bias']
+        
+        new_weight, new_bias, loss = closed_form_q_update(
+            weight, bias, x, a, r, x_next, done, self.discount, self.step_size
+        )
+        
+        self.linear_q_network.params = {
+            'weight': new_weight,
+            'bias': new_bias
+        }
+        
         return loss
 
     def _agent_observation_transform(self, img_obs: jnp.ndarray):
@@ -111,7 +136,7 @@ class LinearQNetworkFlax(nn.Module):
     def __call__(self, x):
         q_values = nn.Dense(
             self.num_actions, 
-            use_bias=False,
+            use_bias=True,
             kernel_init=nn.initializers.lecun_normal() # this is flax's default init, I am just making it explicit
         )(x)
         return q_values
@@ -272,11 +297,21 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     )
     shared_key = jax.random.PRNGKey(cfg.seed)
     num_states = cfg.training.agent_pixel_view_edge_dim * cfg.training.agent_pixel_view_edge_dim * image_shape[2]
-    shared_params = nn.initializers.lecun_normal()(shared_key, (num_states, env.action_space.n))
-    numpy_agent.linear_q_network.params = shared_params
-    flax_agent.train_state.params['params']['Dense_0']['kernel'] = shared_params
+    shared_weight = nn.initializers.lecun_normal()(shared_key, (num_states, env.action_space.n))
+    shared_bias = jnp.zeros(env.action_space.n)
     
-    original_numpy_params = numpy_agent.linear_q_network.params.copy()
+    numpy_agent.linear_q_network.params = {
+        'weight': shared_weight,
+        'bias': shared_bias
+    }
+    
+    flax_agent.train_state.params['params']['Dense_0']['kernel'] = shared_weight
+    flax_agent.train_state.params['params']['Dense_0']['bias'] = shared_bias
+    
+    original_numpy_params = {
+        'weight': numpy_agent.linear_q_network.params['weight'].copy(),
+        'bias': numpy_agent.linear_q_network.params['bias'].copy()
+    }
     original_flax_params = flax_agent.train_state.params.copy()
     
     rng = jax.random.PRNGKey(cfg.seed)
@@ -286,7 +321,11 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     
     
     for _ in range(num_comparisons):
-        numpy_agent.linear_q_network.params = original_numpy_params.copy()
+        # Reset both agents to original parameters for fair comparison
+        numpy_agent.linear_q_network.params = {
+            'weight': original_numpy_params['weight'].copy(),
+            'bias': original_numpy_params['bias'].copy()
+        }
         flax_agent.train_state = flax_agent.train_state.replace(params=original_flax_params.copy())
         
         rng, key = jax.random.split(rng)
@@ -399,6 +438,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         
 @hydra.main(config_path=".", config_name="linear_qlearning_config.yaml", version_base=None)
 def main(cfg):
+    # compare_numpy_vs_flax_losses(cfg)
     print(cfg)
 
     env = gym.make(
