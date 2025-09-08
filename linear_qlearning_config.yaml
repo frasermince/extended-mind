@@ -13,6 +13,9 @@ training:
   total_timesteps: 100000
   discount: 0.95
   step_size: 1e-3
-  epsilon: 0.1
-  agent_pixel_view_edge_dim: 24
+  start_epsilon: 0.7
+  end_epsilon: 0.1
+  exploration_fraction: 0.1
+  agent_pixel_view_edge_dim: 20
   generate_optimal_path: false
+  q_network_type: "flax"
