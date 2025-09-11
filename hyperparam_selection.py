@@ -7,6 +7,9 @@ import pprint
 import json
 
 
+# @title Utility Code
+
+
 def walk_experiment_runs(base_dirs=None):
     """
     Recursively walks through the `experiment_runs` directory and yields
@@ -18,15 +21,17 @@ def walk_experiment_runs(base_dirs=None):
     level (ascending).
     """
     if base_dirs is None:
-        base_prefix = "/Users/frasermince/Downloads/runs 2/"
+        base_prefix = (
+            "/Users/frasermince/Programming/hidden_llava/more_exploration_runs/"
+        )
         base_dirs = [
             base_prefix + "generate_optimal_path_True",
             base_prefix + "generate_optimal_path_False",
         ]
-
     for base_dir in base_dirs:
+        print(base_dir)
         if not os.path.isdir(base_dir):
-            return
+            continue
 
         # Sort learning rates by value (ascending)
         lr_dirs = [
@@ -117,8 +122,7 @@ def walk_experiment_runs(base_dirs=None):
 
                         metrics_path = os.path.join(seed_path, "metrics.pkl")
                         optimal_metrics_path = os.path.join(
-                            seed_path,
-                            "metrics_optimal_path.pkl",
+                            seed_path, "metrics_optimal_path.pkl"
                         )
 
                         if os.path.isfile(metrics_path):
@@ -126,12 +130,12 @@ def walk_experiment_runs(base_dirs=None):
                             yield {
                                 "metrics_path": metrics_path,
                                 "learning_rate": learning_rate,
+                                "learning_rate_str": learning_rate_string,
                                 "network_depth": network_depth,
                                 "network_width": network_width,
                                 "seed_num": seed_num,
                                 "run_key": width_path,
                                 "path_variant": "standard",
-                                "learning_rate_str": learning_rate_string,
                             }
 
                         # Yield optimal-path metrics as a separate item
@@ -139,20 +143,18 @@ def walk_experiment_runs(base_dirs=None):
                             yield {
                                 "metrics_path": optimal_metrics_path,
                                 "learning_rate": learning_rate,
+                                "learning_rate_str": learning_rate_string,
                                 "network_depth": network_depth,
                                 "network_width": network_width,
                                 "seed_num": seed_num,
-                                "run_key": os.path.join(
-                                    width_path,
-                                    "optimal_path",
-                                ),
+                                "run_key": os.path.join(width_path, "optimal_path"),
                                 "path_variant": "optimal_path",
-                                "learning_rate_str": learning_rate_string,
                             }
 
 
 # Can skip if want to use existing results.json
 if __name__ == "__main__":
+    testing_on = False
     accum_results = {}
     depths = (2, 3)
     widths = (4, 8, 16, 32)
@@ -166,6 +168,12 @@ if __name__ == "__main__":
 
     # Example usage: print all found metrics paths and hyperparams
     for result in tqdm(walk_experiment_runs(), desc="Processing experiments"):
+        if testing_on and (
+            result["network_depth"] != 3
+            or result["network_width"] != 16
+            or result["path_variant"] != "standard"
+        ):
+            continue
         try:
             with open(result["metrics_path"], "rb") as f:
                 metrics = pickle.load(f)
@@ -218,6 +226,7 @@ if __name__ == "__main__":
                 "width": result["network_width"],
                 "items": [
                     {
+                        "seed_num": result["seed_num"],
                         "success_rate": last_10_success_percentage,
                         "average_episodic_reward": (
                             last_10_average_episodic_reward_percentage
@@ -229,6 +238,7 @@ if __name__ == "__main__":
         else:
             accum_results[result["run_key"]]["items"].append(
                 {
+                    "seed_num": result["seed_num"],
                     "success_rate": last_10_success_percentage,
                     "average_episodic_reward": (
                         last_10_average_episodic_reward_percentage
@@ -236,10 +246,10 @@ if __name__ == "__main__":
                     "average_reward_per_timestep": average_reward_per_timestep,
                 }
             )
-
-    print("Map of missing seeds:")
-    for key, value in missing_seeds.items():
-        print(f"{key}: {value}")
+    if not testing_on:
+        print("Map of missing seeds:")
+        for key, value in missing_seeds.items():
+            print(f"{key}: {value}")
 
     def capacity_key(item):
         return (item[1]["depth"], item[1]["width"])
@@ -249,27 +259,39 @@ if __name__ == "__main__":
 
     results_list = []
     max_learning_rate_auc = {}
-    for run_key, results in tqdm(sorted_results, desc="Processing results"):
+    for run_key, results in sorted_results:
         # Sort results by capacity (assuming format "depthxwidth", e.g., "3x64")
         items = results["items"]
+
         avg_success_rate = sum(item["success_rate"] for item in items) / len(items)
         avg_average_episodic_reward = sum(
             item["average_episodic_reward"] for item in items
         ) / len(items)
 
         all_avg_episodic_reward = []
-        average_reward_per_timestep = []
         for i in range(len(items[0]["average_reward_per_timestep"])):
-            values_at_i = [item["average_reward_per_timestep"][i] for item in items]
-            all_avg_episodic_reward.append(values_at_i)
-            average_reward_per_timestep.append(np.mean(values_at_i))
+            if i % 10 == 0:
+                values_at_i = [item["average_reward_per_timestep"][i] for item in items]
+                # Shaped (steps, num_seeds)
+                all_avg_episodic_reward.append(values_at_i)
 
-        standard_error = np.std(all_avg_episodic_reward, ddof=1, axis=1) / np.sqrt(
-            len(all_avg_episodic_reward[0])
+        standard_error_reward_curve = np.std(
+            all_avg_episodic_reward, ddof=1, axis=1
+        ) / np.sqrt(len(all_avg_episodic_reward[0]))
+        # shaped (num_seeds, steps)
+        per_seed_avg_episodic_reward = np.swapaxes(all_avg_episodic_reward, 0, 1)
+        total_rewards = []
+        for curve in per_seed_avg_episodic_reward:
+            total_rewards.append(curve[-1] * curve.shape[0] * 10)
+
+        per_seed_aucs = []
+        for seed_curve in per_seed_avg_episodic_reward:
+            per_seed_aucs.append(np.trapezoid(seed_curve, dx=1).item())
+        average_reward_area_under_curve = np.mean(per_seed_aucs)
+
+        per_seed_auc_standard_error = np.std(per_seed_aucs, ddof=1, axis=0) / np.sqrt(
+            len(per_seed_aucs)
         )
-        average_reward_area_under_curve = np.trapezoid(
-            average_reward_per_timestep, dx=1
-        ).item()
         pprint.pprint(f"run_key: {run_key}")
         pprint.pprint(f"avg_success_rate: {avg_success_rate}")
         pprint.pprint(f"avg_average_episodic_reward: {avg_average_episodic_reward}")
@@ -282,8 +304,11 @@ if __name__ == "__main__":
             "avg_success_rate": avg_success_rate,
             "avg_average_episodic_reward": avg_average_episodic_reward,
             "average_reward_area_under_curve": average_reward_area_under_curve,
-            "average_reward_curve": list(average_reward_per_timestep),
-            "average_reward_curve_standard_error": list(standard_error),
+            "average_reward_curve": list(all_avg_episodic_reward),
+            "average_reward_curve_standard_error": list(standard_error_reward_curve),
+            "per_seed_aucs": per_seed_aucs,
+            "per_seed_auc_standard_error": per_seed_auc_standard_error,
+            "total_rewards": total_rewards,
             # "all_avg_episodic_reward": all_avg_episodic_reward,
         }
         if run_key not in max_learning_rate_auc:
@@ -302,9 +327,10 @@ if __name__ == "__main__":
         results_list.append(value["record"])
 
     # Write results to JSON file in the same order
-    with open(
-        "results_max.json",
-        "w",
-        encoding="utf-8",
-    ) as json_file:
-        json.dump(results_list, json_file, indent=2)
+    if not testing_on:
+        with open(
+            "results_more_exploration.json",
+            "w",
+            encoding="utf-8",
+        ) as json_file:
+            json.dump(results_list, json_file, indent=2)
