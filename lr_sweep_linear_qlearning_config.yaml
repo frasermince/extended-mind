@@ -1,0 +1,3 @@
+training.step_size:
+  - 1e-3
+  - 1e-4

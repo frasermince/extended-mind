@@ -7,6 +7,9 @@ import gymnasium as gym
 from gymnasium.envs.registration import register
 import pickle
 import hydra
+import os
+import time
+from tensorboardX import SummaryWriter
 
 
 register(
@@ -162,6 +165,15 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     slope = (end_e - start_e) / duration
     return max(slope * t + start_e, end_e)
 
+
+def log_metric(writer, metrics_dict, name, value, step, step_type="global_step"):
+    writer.add_scalar(name, value, step)
+    if "data" not in metrics_dict:
+        metrics_dict["data"] = []
+    metrics_dict["data"].append(
+        {"metric": name, "step": step, "value": float(value), "step_type": step_type}
+    )
+
 class FlaxQLearningAgent:
     def __init__(self, env_obs_dims : tuple, num_actions: int, discount: float, step_size: float, seed: int, start_epsilon: float, end_epsilon: float,
      exploration_fraction: float, total_timesteps: int, agent_pixel_view_edge_dim: int):
@@ -257,7 +269,7 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
         agent_view_size=cfg.agent_view_size,
         show_walls_pov=cfg.render_options.show_walls_pov,
         seed=cfg.seed,
-        generate_optimal_path=cfg.training.generate_optimal_path,
+        generate_optimal_path=cfg.generate_optimal_path,
         show_optimal_path=cfg.render_options.show_optimal_path,
     )
     env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -361,14 +373,16 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     
 
 
-def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, save_path="rewards.pkl"):
+def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, runs_dir, cfg):
 
+    metrics_dict = {}
     rng = jax.random.PRNGKey(agent.seed)
     episode_rewards = []
     episode_lengths = []
     step_rewards = []
     global_step = 0
     episode_count = 0
+    start_time = time.time()
     
     obs, _ = env.reset()
     done = False
@@ -391,6 +405,10 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         obs_next, r, terminated, truncated, _ = env.step(a)
         done = terminated or truncated
         
+        # Log metrics similar to main_dqn
+        log_metric(writer, metrics_dict, "reward_per_timestep", r, global_step)
+        log_metric(writer, metrics_dict, "is_done", done, global_step)
+        
         agent.update_q_values(obs["image"], a, r, obs_next["image"], done, agent.discount)
 
         obs = obs_next
@@ -405,41 +423,62 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
             
             avg_reward_per_global_step = sum(step_rewards) / global_step
             
+            # Log episode metrics
+            log_metric(writer, metrics_dict, "charts/success_rate", total_reward, episode_count, "episode")
+            log_metric(writer, metrics_dict, "charts/average_episodic_reward", total_reward / episode_steps, episode_count, "episode")
+            log_metric(writer, metrics_dict, "charts/episodic_length", episode_steps, global_step)
+            log_metric(writer, metrics_dict, "charts/episode_count", episode_count, global_step)
+            
             print(f"Episode {episode_count} - Episode Length: {episode_steps} - Total Reward: {total_reward}, Episode Steps: {episode_steps}, Global Step: {global_step}, Avg Reward/Global Step: {avg_reward_per_global_step:.4f}")
             
             total_reward = 0
             episode_steps = 0
         
-        if (global_step + 1) % 1000 == 0:
-            training_data = {
-                'episode_rewards': episode_rewards,
-                'episode_lengths': episode_lengths,
-                'step_rewards': step_rewards,
-                'global_step': global_step + 1,
-                'episode_count': episode_count,
-            }
-            
-            with open(save_path, 'wb') as f:
-                pickle.dump(training_data, f)
+        # Log SPS (Steps Per Second) every 100 steps
+        if global_step % 100 == 0:
+            sps = int(global_step / (time.time() - start_time))
+            log_metric(writer, metrics_dict, "charts/SPS", sps, global_step)
+            print("SPS:", sps)
 
-    min_episode_length = min(episode_lengths)
+    min_episode_length = min(episode_lengths) if episode_lengths else 0
     print(f"Min episode length: {min_episode_length}")
     
-    training_data = {
-        'episode_rewards': episode_rewards,
-        'episode_lengths': episode_lengths,
-        'step_rewards': step_rewards,
-        'global_step': global_step + 1,
-        'episode_count': episode_count,
-    }
-
-    with open(save_path, 'wb') as f:
-        pickle.dump(training_data, f)
+    # Save final metrics to pickle file
+    if cfg.generate_optimal_path:
+        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
+    else:
+        metrics_path = f"{runs_dir}/metrics.pkl"
+    with open(metrics_path, "wb") as f:
+        pickle.dump(metrics_dict, f)
+    print(f"Metrics saved to {metrics_path}")
         
 @hydra.main(config_path=".", config_name="linear_qlearning_config.yaml", version_base=None)
 def main(cfg):
-    # compare_numpy_vs_flax_losses(cfg)
+    start_time = time.time()
+    print("Hydra loaded config:")
     print(cfg)
+
+
+    # Create nested directory structure based on hyperparameters
+    step_size_str = str(cfg.training.step_size)
+    runs_dir = os.path.join(
+        cfg.run_folder,
+        f"agent_name_{cfg.agent_name}",
+        f"generate_optimal_path_{cfg.generate_optimal_path}",
+        f"step_size_{step_size_str}",
+        f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
+        f"seed_{cfg.seed}",
+    )
+    print(f"Runs directory: {runs_dir}")
+    os.makedirs(runs_dir, exist_ok=True)
+
+    # Set up tensorboard writer
+    writer = SummaryWriter(f"{runs_dir}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s"
+        % ("\n".join([f"|{key}|{value}|" for key, value in vars(cfg).items()])),
+    )
 
     env = gym.make(
         "MiniGrid-SaltAndPepper-v0-custom",
@@ -448,14 +487,13 @@ def main(cfg):
         agent_view_size=cfg.agent_view_size,
         show_walls_pov=cfg.render_options.show_walls_pov,
         seed=cfg.seed,
-        generate_optimal_path=cfg.training.generate_optimal_path,
+        generate_optimal_path=cfg.generate_optimal_path,
         show_optimal_path=cfg.render_options.show_optimal_path,
     )
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.Autoreset(env)
     env.action_space.seed(cfg.seed)
     image_shape = env.observation_space["image"].shape
-
 
     if cfg.training.q_network_type == "flax":
         agent = FlaxQLearningAgent(
@@ -486,7 +524,16 @@ def main(cfg):
     else:
         raise ValueError(f"Invalid q network type: {cfg.training.q_network_type}")
 
-    train(agent, env, total_timesteps=cfg.training.total_timesteps)
+    train(agent, env, total_timesteps=cfg.training.total_timesteps, writer=writer, runs_dir=runs_dir, cfg=cfg)
+    
+    env.close()
+    writer.close()
+    
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(f"\n{'='*50}")
+    print(f"Total execution time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    print(f"{'='*50}")
     
 
 
