@@ -1,8 +1,10 @@
-exp_name: linear_qlearning
+agent_name: "linear_qlearning"
+run_folder: "~/scratch/extended-mind/runs"
 
 seed: 1
 agent_view_size: 3
 max_steps: 1000
+generate_optimal_path: false
 
 render_options:
   show_grid_lines: false
@@ -10,6 +12,7 @@ render_options:
   show_optimal_path: true
 
 training:
+  env_id: "MiniGrid-SaltAndPepper-v0-custom"
   total_timesteps: 100000
   discount: 0.95
   step_size: 1e-3
@@ -17,5 +20,4 @@ training:
   end_epsilon: 0.1
   exploration_fraction: 0.1
   agent_pixel_view_edge_dim: 20
-  generate_optimal_path: false
   q_network_type: "flax"
