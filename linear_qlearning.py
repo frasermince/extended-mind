@@ -438,7 +438,6 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         if global_step % 100 == 0:
             sps = int(global_step / (time.time() - start_time))
             log_metric(writer, metrics_dict, "charts/SPS", sps, global_step)
-            print("SPS:", sps)
 
     min_episode_length = min(episode_lengths) if episode_lengths else 0
     print(f"Min episode length: {min_episode_length}")
