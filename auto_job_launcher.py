@@ -73,7 +73,7 @@ def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, scrip
     
     env_prep = f"""
 echo Start!
-git clone ~/scratch/extended-mind $SLURM_TMPDIR/extended-mind
+git clone /home/esraa1/scratch/extended-mind $SLURM_TMPDIR/extended-mind
 cd $SLURM_TMPDIR/extended-mind
 uv sync --offline
 
@@ -159,7 +159,7 @@ def check_if_file_exists(file_path):
     return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
-def construct_run_path(tc, run_folder="~/scratch/extended-mind/runs"):
+def construct_run_path(tc, run_folder="/home/esraa1/scratch/extended-mind/runs"):
     agent_name = tc['agent_name']
     if(agent_name == "main_dqn"):
         generate_optimal_path = tc['generate_optimal_path']
