@@ -16,7 +16,6 @@ from typing import Any, SupportsFloat
 
 from enum import IntEnum, StrEnum
 
-from pathfinding import compute_pixel_dijkstra_path
 
 TILE_PIXELS = 8
 
@@ -117,7 +116,6 @@ class DirectionlessGrid(Grid):
         self.tile_global_indices = kwargs.pop("tile_global_indices", None)
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
-        self.generate_optimal_path = kwargs.pop("generate_optimal_path", True)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
         self.path_widths = kwargs.pop("path_widths", None)
@@ -189,7 +187,7 @@ class DirectionlessGrid(Grid):
             else:
                 img = np.expand_dims(grid.unique_tiles[i, j][:, :, 0].copy(), axis=-1)
 
-        if grid.generate_optimal_path or grid.show_optimal_path or reveal_all:
+        if grid.show_optimal_path or reveal_all:
             # Draw path pixels
             tile_x_start = i * tile_size
             tile_y_start = j * tile_size
@@ -354,6 +352,7 @@ class DirectionlessGrid(Grid):
                 local_path_pixels.add((local_px, local_py))
                 local_path_widths.append((x_width, y_width))
                 local_path_pixels_array.append((local_px, local_py))
+
         grid = DirectionlessGrid(
             width,
             height,
@@ -362,7 +361,6 @@ class DirectionlessGrid(Grid):
             padded_unique_tiles=self.padded_unique_tiles,
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
-            generate_optimal_path=self.generate_optimal_path,
             show_optimal_path=self.show_optimal_path,
             pad_width=self.pad_width,
             seed=self.seed,
@@ -399,6 +397,7 @@ class PathMode(StrEnum):
     SLIGHTLY_SUBOPTIMAL_PATH = "SLIGHTLY_SUBOPTIMAL_PATH"
     SUBOPTIMAL_PATH = "SUBOPTIMAL_PATH"
     MISLEADING_PATH = "MISLEADING_PATH"
+    VISITED_CELLS = "VISITED_CELLS"
 
 
 class SaltAndPepper(MiniGridEnv):
@@ -518,6 +517,10 @@ class SaltAndPepper(MiniGridEnv):
             self.pad_width,
             self.tile_global_indices,
         ) = self._gen_unique_tiles()
+        self.cell_visitation = np.zeros(shape=(size, size, 4))
+        self.cell_visitation_indices_stack = []
+        self.max_visitation_count = 1000
+        self.segments_in_visitation_path = 25
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -617,9 +620,8 @@ class SaltAndPepper(MiniGridEnv):
             self.path, self.path_widths = misleading_path.to_pixel_list()
         else:
             self.path, self.path_widths = [], []
-        if self.generate_optimal_path:
-            self.path, self.path_widths = shortest_path.to_pixel_list()
 
+        # Update grid with path pixels
         if self.show_optimal_path and self.path:
             self.grid.path_pixels = set(self.path)
             self.grid.path_pixels_array = self.path
@@ -669,6 +671,68 @@ class SaltAndPepper(MiniGridEnv):
 
         return img
 
+    def generate_visitation_path(self):
+        segment_count = np.minimum(
+            self.segments_in_visitation_path, np.sum(self.cell_visitation > 0)
+        )
+        flat = self.cell_visitation.flatten()
+        order = np.lexsort(
+            (np.arange(flat.size), -flat)
+        )  # primary: -flat, secondary: index
+        top_indices = order[:segment_count]
+        # Vectorized construction of per-tile vertical path pixels
+
+        r, c, action = np.unravel_index(top_indices, self.cell_visitation.shape)
+
+        left_x_pix = (
+            (r * TILE_PIXELS)[:, None]
+            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+        ).ravel()
+        left_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+
+        up_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+        up_y_pix = (
+            (c * TILE_PIXELS)[:, None]
+            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+        ).ravel()
+
+        right_x_pix = (
+            (r * TILE_PIXELS)[:, None]
+            + np.arange(TILE_PIXELS + 1)
+            + TILE_PIXELS // 2
+            - 1
+        ).ravel()
+        right_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+
+        down_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+        down_y_pix = (
+            (c * TILE_PIXELS)[:, None]
+            + np.arange(TILE_PIXELS + 1)
+            + TILE_PIXELS // 2
+            - 1
+        ).ravel()
+
+        action = action.repeat(TILE_PIXELS + 1)
+
+        x_pix = np.choose(
+            action,
+            [left_x_pix, up_x_pix, right_x_pix, down_x_pix],
+        )
+        y_pix = np.choose(action, [left_y_pix, up_y_pix, right_y_pix, down_y_pix])
+
+        coords = np.column_stack((x_pix, y_pix)).tolist()
+
+        self.path = list(map(tuple, coords))
+        self.path_widths = np.where(
+            np.logical_or(action[:, None] == 1, action[:, None] == 3),
+            np.tile([1, 0], (len(self.path), 1)),
+            np.tile([0, 1], (len(self.path), 1)),
+        )
+
+        self.grid.path_pixels = set(self.path)
+        self.grid.path_pixels_array = self.path
+        self.grid.path_widths = self.path_widths
+
     def gen_obs_grid(self, agent_view_size=None):
         """
         Generate the sub-grid observed by the agent.
@@ -680,6 +744,9 @@ class SaltAndPepper(MiniGridEnv):
         topX, topY, botX, botY = self.get_view_exts(agent_view_size)
 
         agent_view_size = agent_view_size or self.agent_view_size
+
+        if self.path_mode == PathMode.VISITED_CELLS:
+            self.generate_visitation_path()
 
         grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
 
@@ -778,6 +845,13 @@ class SaltAndPepper(MiniGridEnv):
 
         return img
 
+    def update_visitation_count(self, pos, action):
+        self.cell_visitation[pos[0], pos[1], action] += 1
+        self.cell_visitation_indices_stack.append([pos[0], pos[1], action])
+        if len(self.cell_visitation_indices_stack) > self.max_visitation_count:
+            index = self.cell_visitation_indices_stack.pop(0)
+            self.cell_visitation[index[0], index[1], index[2]] -= 1
+
     def step(
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
@@ -800,7 +874,12 @@ class SaltAndPepper(MiniGridEnv):
             fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
             fwd_cell = self.grid.get(*fwd_pos)
             if fwd_cell is None or fwd_cell.can_overlap():
+                self.update_visitation_count(
+                    self.agent_pos,
+                    action.item(),
+                )
                 self.agent_pos = tuple(fwd_pos)
+
             if fwd_cell is not None and fwd_cell.type == "goal":
                 terminated = True
                 reward = self._reward()
