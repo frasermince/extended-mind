@@ -27,7 +27,7 @@ experiment_description: "logging-test"
 
 agent_view_size: 3
 
-generate_optimal_path: false
+path_mode: "VISITED_CELLS"
 
 render_options:
   show_grid_lines: false
