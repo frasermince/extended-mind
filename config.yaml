@@ -58,9 +58,9 @@ training:
   # the starting epsilon for exploration
   start_e: 1.0
   # the ending epsilon for exploration
-  end_e: 0.01
+  end_e: 0.1
   # the fraction of `total-timesteps` it takes from start-e to go end-e
-  exploration_fraction: 0.10
+  exploration_fraction: 0.50
   # timestep to start learning
   learning_starts: 5000
   # the frequency of training
