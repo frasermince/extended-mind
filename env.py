@@ -682,39 +682,17 @@ class SaltAndPepper(MiniGridEnv):
         terminated = False
         truncated = False
 
-        # Move left
-        if action == self.actions.left:
-            fwd_pos = np.array((self.agent_pos[0] - 1, self.agent_pos[1]))
-            fwd_cell = self.grid.get(*fwd_pos)
-            if fwd_cell is None or fwd_cell.can_overlap():
-                self.agent_pos = tuple(fwd_pos)
-            if fwd_cell is not None and fwd_cell.type == "goal":
-                terminated = True
-                reward = self._reward()
+        # Map actions to movement deltas
+        action_deltas = {
+            self.actions.left: (-1, 0),
+            self.actions.right: (1, 0),
+            self.actions.forward: (0, -1),
+            self.actions.backward: (0, 1),
+        }
 
-        # Move right
-        elif action == self.actions.right:
-            fwd_pos = np.array((self.agent_pos[0] + 1, self.agent_pos[1]))
-            fwd_cell = self.grid.get(*fwd_pos)
-            if fwd_cell is None or fwd_cell.can_overlap():
-                self.agent_pos = tuple(fwd_pos)
-            if fwd_cell is not None and fwd_cell.type == "goal":
-                terminated = True
-                reward = self._reward()
-
-        # Move forward
-        elif action == self.actions.forward:
-            fwd_pos = np.array((self.agent_pos[0], self.agent_pos[1] - 1))
-            fwd_cell = self.grid.get(*fwd_pos)
-            if fwd_cell is None or fwd_cell.can_overlap():
-                self.agent_pos = tuple(fwd_pos)
-            if fwd_cell is not None and fwd_cell.type == "goal":
-                terminated = True
-                reward = self._reward()
-
-        # Move backward
-        elif action == self.actions.backward:
-            fwd_pos = np.array((self.agent_pos[0], self.agent_pos[1] + 1))
+        if action.item() in action_deltas:
+            dx, dy = action_deltas[action.item()]
+            fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
             fwd_cell = self.grid.get(*fwd_pos)
             if fwd_cell is None or fwd_cell.can_overlap():
                 self.agent_pos = tuple(fwd_pos)
