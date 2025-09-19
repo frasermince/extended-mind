@@ -1,6 +1,7 @@
 # the name of this experiment
 exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
 agent_name: "main_dqn"
+run_folder: "/home/esraa1/scratch/extended-mind/runs"
 # seed of the experiment
 seed: 1
 # if toggled, this experiment will be tracked with Weights and Biases
@@ -73,5 +74,3 @@ train: true
 dry_run: false
 
 exp_group_id: "test_id"
-
-run_folder: "runs"
