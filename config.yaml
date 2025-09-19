@@ -40,7 +40,7 @@ training:
   # the id of the environment
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
   # total timesteps of the experiments
-  total_timesteps: 100000
+  total_timesteps: 200000
   # the learning rate of the optimizer
   learning_rate: 1e-4
   # the number of parallel game environments

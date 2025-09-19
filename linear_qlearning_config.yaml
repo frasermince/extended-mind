@@ -13,10 +13,10 @@ render_options:
 
 training:
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
-  total_timesteps: 100000
+  total_timesteps: 200000
   discount: 0.95
   step_size: 1e-3
-  start_epsilon: 0.7
+  start_epsilon: 1.0
   end_epsilon: 0.1
   exploration_fraction: 0.5
   agent_pixel_view_edge_dim: 20
