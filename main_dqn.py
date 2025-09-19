@@ -175,7 +175,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
         ),
-        tx=optax.adam(learning_rate=cfg.training.learning_rate),
+        tx=optax.rmsprop(learning_rate=cfg.training.learning_rate),
     )
     print(
         "params",
@@ -246,7 +246,6 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             actions = jax.device_get(actions)
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        # TODO: Check if this adds an off by one error
         if terminations or truncations:
             # key, new_key = jax.random.split(key)
             # seed = int(jax.random.randint(new_key, (), 0, 2**30))
@@ -254,6 +253,8 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             next_obs, _ = envs.reset()
             terminations = np.array([False])
             truncations = np.array([False])
+            rewards = np.array([0])
+            infos = {"episode": {"r": 0, "l": 0}}
         else:
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
@@ -524,13 +525,15 @@ def main(cfg):
 
     envs.close()
     writer.close()
-    
+
     end_time = time.time()
     total_time = end_time - start_time
     print(f"\n{'='*50}")
-    print(f"Total execution time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
+    print(
+        f"Total execution time: {total_time:.2f} seconds ({total_time/60:.2f} minutes)"
+    )
     print(f"{'='*50}")
-    
+
     return envs
 
 
