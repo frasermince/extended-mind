@@ -1,6 +1,6 @@
 # the name of this experiment
 exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
-
+agent_name: "main_dqn"
 # seed of the experiment
 seed: 1
 # if toggled, this experiment will be tracked with Weights and Biases
