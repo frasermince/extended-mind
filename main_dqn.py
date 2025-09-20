@@ -26,6 +26,15 @@ import hydra
 
 import matplotlib.pyplot as plt
 import pickle
+import uuid
+
+# Optional dependency: pyarrow for Parquet output
+try:
+    import pyarrow as pa  # type: ignore[import]
+    import pyarrow.parquet as pq  # type: ignore[import]
+except Exception:
+    pa = None
+    pq = None
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -103,6 +112,129 @@ def log_metric(writer, metrics_dict, name, value, step, step_type="global_step")
     )
 
 
+def _get_metric_series(metrics_dict, metric_name):
+    data = metrics_dict.get("data", [])
+    return [item["value"] for item in data if item.get("metric") == metric_name]
+
+
+def _get_last_metric_value(metrics_dict, metric_name, default_value=None):
+    series = _get_metric_series(metrics_dict, metric_name)
+    if len(series) == 0:
+        return default_value
+    return series[-1]
+
+
+def write_parquet_result(cfg, run_name, metrics_dict, parquet_dir):
+    """Write a single-row Parquet part file into a shared dataset directory.
+
+    Each run calls this once at the end. Readers will scan the directory as one table.
+    """
+    if pa is None or pq is None:
+        print("pyarrow not available; skipping Parquet result write.")
+        return
+
+    # Aggregate simple summaries used by plotting
+    success_values = _get_metric_series(metrics_dict, "charts/success_rate")
+    avg_ep_reward_values = _get_metric_series(
+        metrics_dict, "charts/average_episodic_reward"
+    )
+    episode_lengths = _get_metric_series(metrics_dict, "charts/episodic_length")
+    episode_counts = _get_metric_series(metrics_dict, "charts/episode_count")
+    final_sps = _get_last_metric_value(metrics_dict, "charts/SPS", default_value=None)
+
+    num_episodes = (
+        int(episode_counts[-1]) if len(episode_counts) > 0 else len(success_values)
+    )
+    mean_success_rate = (
+        float(np.mean(success_values)) if len(success_values) > 0 else None
+    )
+    mean_avg_episodic_reward = (
+        float(np.mean(avg_ep_reward_values)) if len(avg_ep_reward_values) > 0 else None
+    )
+    mean_episodic_length = (
+        float(np.mean(episode_lengths)) if len(episode_lengths) > 0 else None
+    )
+
+    # Compose a single row
+    row = {
+        "timestamp_unix": float(time.time()),
+        "date": time.strftime("%Y-%m-%d"),
+        "run_name": run_name,
+        "exp_name": cfg.exp_name,
+        "exp_group_id": getattr(cfg, "exp_group_id", "default"),
+        "seed": int(cfg.seed),
+        "env_id": str(cfg.training.env_id),
+        "learning_rate": float(cfg.training.learning_rate),
+        "dense_features": str(list(cfg.training.dense_features)),
+        "agent_view_size": int(cfg.agent_view_size),
+        "path_mode": str(cfg.path_mode),
+        "generate_optimal_path": bool(cfg.generate_optimal_path),
+        "total_timesteps": int(cfg.training.total_timesteps),
+        "num_episodes": int(num_episodes),
+        "mean_success_rate": mean_success_rate,
+        "mean_avg_episodic_reward": mean_avg_episodic_reward,
+        "mean_episodic_length": mean_episodic_length,
+        "final_SPS": float(final_sps) if final_sps is not None else None,
+        "wandb_project_name": getattr(cfg, "wandb_project_name", None),
+        "wandb_entity": getattr(cfg, "wandb_entity", None),
+    }
+
+    table = pa.Table.from_pylist([row])
+
+    # Write to summary subdirectory under the hyperparameter-partitioned base dir
+    summary_dir = os.path.join(parquet_dir, "summary")
+    os.makedirs(summary_dir, exist_ok=True)
+    part_path = os.path.join(summary_dir, f"part-{uuid.uuid4().hex}.parquet")
+    pq.write_table(table, part_path, compression="zstd", compression_level=3)
+    print(f"Parquet result saved to {part_path}")
+
+
+def write_parquet_metrics(cfg, run_name, metrics_dict, metrics_parquet_dir):
+    """Write all log_metric entries as a time-series Parquet part file.
+
+    Each element in metrics_dict["data"] becomes one row with run metadata
+    attached for efficient filtering across runs.
+    """
+    if pa is None or pq is None:
+        print("pyarrow not available; skipping metrics Parquet write.")
+        return
+
+    data = metrics_dict.get("data", [])
+    if not data:
+        print("No metrics to write to metrics Parquet dataset.")
+        return
+
+    rows = []
+    network_depth = len(cfg.training.dense_features)
+    network_width = cfg.training.dense_features[0] if cfg.training.dense_features else 0
+    optimal_path_available = bool(cfg.path_mode != PathMode.NONE)
+    for item in data:
+        rows.append(
+            {
+                # minimal run-level metadata for grouping
+                "learning_rate": float(cfg.training.learning_rate),
+                "network_depth": int(network_depth),
+                "network_width": int(network_width),
+                "seed": int(cfg.seed),
+                "optimal_path_available": optimal_path_available,
+                # metric payload
+                "metric": str(item.get("metric")),
+                "step": int(item.get("step", 0)),
+                "value": float(item.get("value", 0.0)),
+                "step_type": str(item.get("step_type", "global_step")),
+            }
+        )
+
+    table = pa.Table.from_pylist(rows)
+
+    # Write to metrics subdirectory under the hyperparameter-partitioned base dir
+    metrics_dir = os.path.join(metrics_parquet_dir, "metrics")
+    os.makedirs(metrics_dir, exist_ok=True)
+    part_path = os.path.join(metrics_dir, f"part-{uuid.uuid4().hex}.parquet")
+    pq.write_table(table, part_path, compression="zstd", compression_level=3)
+    print(f"Metrics Parquet saved to {part_path}")
+
+
 def eval_env(cfg, envs):
     print("****Evaluating****")
     obs, _ = envs.reset(seed=cfg.seed)
@@ -143,7 +275,15 @@ def eval_env(cfg, envs):
         # plt.close()
 
 
-def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
+def train_env(
+    cfg,
+    envs,
+    q_key,
+    writer,
+    run_name,
+    runs_dir,
+    parquet_dir,
+):
     metrics_dict = {}
     print("Default JAX device:", jax.devices()[0])
     print("All available devices:", jax.devices())
@@ -429,13 +569,9 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
-    if cfg.path_mode == PathMode.SHORTEST_PATH:
-        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
-    else:
-        metrics_path = f"{runs_dir}/metrics.pkl"
-    with open(metrics_path, "wb") as f:
-        pickle.dump(metrics_dict, f)
-    print(f"Metrics saved to {metrics_path}")
+    print(f"Summary Parquet saving to {parquet_dir}")
+    # Write both metrics (per-step) and summary (per-run)
+    write_parquet_metrics(cfg, run_name, metrics_dict, parquet_dir)
 
 
 @hydra.main(config_path=".", config_name="config.yaml", version_base=None)
@@ -470,8 +606,13 @@ def main(cfg):
         f"network_width_{network_width}",
         f"seed_{cfg.seed}",
     )
+    parquet_dir = os.path.join(
+        cfg.parquet_folder,
+    )
     print(f"Runs directory: {runs_dir}")
+    print(f"Parquet directory: {parquet_dir}")
     os.makedirs(runs_dir, exist_ok=True)
+    os.makedirs(parquet_dir, exist_ok=True)
     if cfg.track:
         import wandb
 
@@ -528,7 +669,15 @@ def main(cfg):
     if cfg.eval:
         eval_env(cfg, envs)
     else:
-        train_env(cfg, envs, q_key, writer, run_name, runs_dir)
+        train_env(
+            cfg,
+            envs,
+            q_key,
+            writer,
+            run_name,
+            runs_dir,
+            parquet_dir,
+        )
 
     envs.close()
     writer.close()
