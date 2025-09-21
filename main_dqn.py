@@ -8,6 +8,7 @@ import gymnasium as gym
 import jax
 import jax.numpy as jnp
 import numpy as np
+import json
 import optax
 from flax.training.train_state import TrainState
 
@@ -189,7 +190,9 @@ def write_parquet_result(cfg, run_name, metrics_dict, parquet_dir):
     print(f"Parquet result saved to {part_path}")
 
 
-def write_parquet_metrics(cfg, run_name, metrics_dict, metrics_parquet_dir):
+def write_parquet_metrics(
+    cfg, run_name, metrics_dict, metrics_parquet_dir, model_params_json, global_step
+):
     """Write all log_metric entries as a time-series Parquet part file.
 
     Each element in metrics_dict["data"] becomes one row with run metadata
@@ -221,9 +224,27 @@ def write_parquet_metrics(cfg, run_name, metrics_dict, metrics_parquet_dir):
                 "metric": str(item.get("metric")),
                 "step": int(item.get("step", 0)),
                 "value": float(item.get("value", 0.0)),
+                # keep numeric values in `value` and reserve strings for `json_value`
+                "json_value": None,
                 "step_type": str(item.get("step_type", "global_step")),
             }
         )
+    rows.append(
+        {
+            # include run-level metadata for consistent filtering
+            "learning_rate": float(cfg.training.learning_rate),
+            "network_depth": int(network_depth),
+            "network_width": int(network_width),
+            "seed": int(cfg.seed),
+            "optimal_path_available": optimal_path_available,
+            "metric": "model_params_json",
+            "step": int(global_step),
+            # keep numeric column null; store JSON string separately
+            "value": None,
+            "json_value": model_params_json,
+            "step_type": "global_step",
+        }
+    )
 
     table = pa.Table.from_pylist(rows)
 
@@ -570,8 +591,31 @@ def train_env(
                 f"videos/{run_name}-eval",
             )
     print(f"Summary Parquet saving to {parquet_dir}")
-    # Write both metrics (per-step) and summary (per-run)
-    write_parquet_metrics(cfg, run_name, metrics_dict, parquet_dir)
+
+    def jax_tree_to_py(tree):
+        # Recursively convert JAX arrays to lists for JSON serialization
+        if isinstance(tree, dict):
+            return {k: jax_tree_to_py(v) for k, v in tree.items()}
+        elif isinstance(tree, (list, tuple)):
+            return [jax_tree_to_py(v) for v in tree]
+        elif hasattr(tree, "tolist"):
+            return tree.tolist()
+        else:
+            return tree
+
+    params_py = jax_tree_to_py(q_state.params)
+    params_json = json.dumps(params_py)
+    if cfg.path_mode == PathMode.SHORTEST_PATH:
+        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
+    else:
+        metrics_path = f"{runs_dir}/metrics.pkl"
+    with open(metrics_path, "wb") as f:
+        pickle.dump(metrics_dict, f)
+    print(f"Metrics saved to {metrics_path}")
+
+    write_parquet_metrics(
+        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step
+    )
 
 
 @hydra.main(config_path=".", config_name="config.yaml", version_base=None)
@@ -608,6 +652,11 @@ def main(cfg):
     )
     parquet_dir = os.path.join(
         cfg.parquet_folder,
+        f"path_mode_{cfg.path_mode}",
+        f"learning_rate_{learning_rate_str}",
+        f"network_depth_{network_depth}",
+        f"network_width_{network_width}",
+        f"seed_{cfg.seed}",
     )
     print(f"Runs directory: {runs_dir}")
     print(f"Parquet directory: {parquet_dir}")
