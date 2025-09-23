@@ -175,7 +175,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
         ),
-        tx=optax.rmsprop(learning_rate=cfg.training.learning_rate),
+        tx=optax.adam(learning_rate=cfg.training.learning_rate),
     )
     print(
         "params",
@@ -443,6 +443,8 @@ def main(cfg):
 
     if cfg.dry_run:
         return
+    if cfg.generate_optimal_path:
+        cfg.path_mode = "SHORTEST_PATH"
     assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.training.dense_features)
     run_name = (
