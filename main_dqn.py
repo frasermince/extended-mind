@@ -16,7 +16,7 @@ from tensorboardX import SummaryWriter
 
 from networks_jax import Network
 
-from env import TILE_PIXELS
+from env import TILE_PIXELS, PathMode
 from wrappers import PartialAndTotalRecordVideo
 from replay_buffer import ReplayBuffer
 from gymnasium.envs.registration import register
@@ -43,8 +43,8 @@ def make_env(
     show_grid_lines,
     agent_view_size,
     show_walls_pov,
-    generate_optimal_path,
     show_optimal_path,
+    path_mode,
 ):
     def thunk():
         if capture_video and idx == 0:
@@ -55,8 +55,8 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
-                generate_optimal_path=generate_optimal_path,
                 show_optimal_path=show_optimal_path,
+                path_mode=path_mode,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -70,8 +70,8 @@ def make_env(
                 agent_view_size=agent_view_size,
                 show_walls_pov=show_walls_pov,
                 seed=seed,
-                generate_optimal_path=generate_optimal_path,
                 show_optimal_path=show_optimal_path,
+                path_mode=path_mode,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -146,8 +146,8 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
     print("All available devices:", jax.devices())
 
     # Print configuration for optimal path visibility
-    if cfg.generate_optimal_path:
-        print(f"Path generation enabled: {cfg.generate_optimal_path}")
+    if cfg.path_mode != PathMode.NONE:
+        print(f"Path generation enabled: {cfg.path_mode}")
 
     obs, _ = envs.reset(seed=cfg.seed)
     start_time = time.time()
@@ -175,7 +175,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
             q_key,
             jnp.expand_dims(jnp.array(obs["image"]), 0),
         ),
-        tx=optax.rmsprop(learning_rate=cfg.training.learning_rate),
+        tx=optax.adam(learning_rate=cfg.training.learning_rate),
     )
     print(
         "params",
@@ -443,6 +443,8 @@ def main(cfg):
 
     if cfg.dry_run:
         return
+    if cfg.generate_optimal_path:
+        cfg.path_mode = "SHORTEST_PATH"
     assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.training.dense_features)
     run_name = (
@@ -458,7 +460,6 @@ def main(cfg):
 
     runs_dir = os.path.join(
         cfg.run_folder,
-        f"generate_optimal_path_{cfg.generate_optimal_path}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
@@ -510,8 +511,8 @@ def main(cfg):
         cfg.render_options.show_grid_lines,
         cfg.agent_view_size,
         cfg.render_options.show_walls_pov,
-        cfg.generate_optimal_path,
         cfg.render_options.show_optimal_path,
+        cfg.path_mode,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete

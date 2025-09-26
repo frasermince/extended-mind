@@ -1,7 +1,7 @@
 # the name of this experiment
 exp_name: ${oc.env:EXP_NAME,${hydra:runtime.filename}}
 agent_name: "main_dqn"
-run_folder: "/home/esraa1/scratch/extended-mind/runs"
+run_folder: "./runs"
 # seed of the experiment
 seed: 1
 # if toggled, this experiment will be tracked with Weights and Biases
@@ -30,6 +30,8 @@ agent_view_size: 3
 
 generate_optimal_path: false
 
+path_mode: "NONE"
+
 render_options:
   show_grid_lines: false
   show_walls_pov: false
@@ -41,7 +43,7 @@ training:
   # the id of the environment
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
   # total timesteps of the experiments
-  total_timesteps: 200000
+  total_timesteps: 100000
   # the learning rate of the optimizer
   learning_rate: 1e-4
   # the number of parallel game environments
@@ -59,9 +61,9 @@ training:
   # the starting epsilon for exploration
   start_e: 1.0
   # the ending epsilon for exploration
-  end_e: 0.1
+  end_e: 0.01
   # the fraction of `total-timesteps` it takes from start-e to go end-e
-  exploration_fraction: 0.50
+  exploration_fraction: 0.10
   # timestep to start learning
   learning_starts: 5000
   # the frequency of training
