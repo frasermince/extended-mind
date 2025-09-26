@@ -443,9 +443,8 @@ def main(cfg):
 
     if cfg.dry_run:
         return
-    # if cfg.generate_optimal_path:
-    #     cfg.path_mode = "SHORTEST_PATH"
-    #check that specified path mode is valid
+
+    # check that specified path mode is valid
     assert cfg.path_mode in [mode.value for mode in PathMode], "Invalid path mode"
     assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.training.dense_features)
