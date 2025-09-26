@@ -174,10 +174,12 @@ def check_if_file_exists(file_path):
     return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
-def construct_run_path(tc, run_folder="/home/esraa1/scratch/extended-mind/runs"):
+def construct_run_path(tc, run_folder=None):
+    if run_folder is None:
+        run_folder = "/home/esraa1/scratch/extended-mind/runs"
     agent_name = tc['agent_name']
     if(agent_name == "main_dqn"):
-        generate_optimal_path = tc['generate_optimal_path']
+        path_mode = tc['path_mode']
         learning_rate = tc['training.learning_rate']
         dense_features = tc['training.dense_features']
         seed = tc['seed']
@@ -195,7 +197,7 @@ def construct_run_path(tc, run_folder="/home/esraa1/scratch/extended-mind/runs")
         
         run_path = os.path.join(
             run_folder,
-            f"generate_optimal_path_{generate_optimal_path}",
+            f"path_mode_{path_mode}",
             f"learning_rate_{learning_rate_str}",
             f"network_depth_{network_depth}",
             f"network_width_{network_width}",
@@ -204,7 +206,7 @@ def construct_run_path(tc, run_folder="/home/esraa1/scratch/extended-mind/runs")
         
     elif(agent_name == "linear_qlearning"):
         agent_name = tc['agent_name']
-        generate_optimal_path = tc['generate_optimal_path']
+        path_mode = tc['path_mode']
         step_size = tc['training.step_size']
         agent_pixel_view_edge_dim = tc['training.agent_pixel_view_edge_dim']
         seed = tc['seed']
@@ -221,7 +223,7 @@ def construct_run_path(tc, run_folder="/home/esraa1/scratch/extended-mind/runs")
         run_path = os.path.join(
         run_folder,
         f"agent_name_{agent_name}",
-        f"generate_optimal_path_{generate_optimal_path}",
+        f"path_mode_{path_mode}",
         f"step_size_{step_size_str}",
         f"agent_pixel_view_edge_dim_{agent_pixel_view_edge_dim}",
         f"seed_{seed}",
@@ -261,11 +263,12 @@ def main():
     script_name = args.agent_name
     for one_job_task_confs in task_confs_per_job:
         print(f"Generating script for job {num_jobs+1}...")
-        script = generate_script(one_job_task_confs, cluster_conf, args.max_job_time, args.wandb_api_key, script_name, args.run_folder)
+        script = generate_script(task_confs=one_job_task_confs, cluster_conf=cluster_conf, max_job_time=args.max_job_time, wandb_api_key=args.wandb_api_key, script_name=script_name, run_folder=args.run_folder)
         print(script)
         print("--------------------------------")
         if not args.dry_run:
             submit_bash_script(script)
+            exit()
         num_jobs += 1
         
     print(f"Auto Job Launcher is done. There are {num_jobs} jobs.")

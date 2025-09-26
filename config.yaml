@@ -28,8 +28,6 @@ experiment_description: "logging-test"
 
 agent_view_size: 3
 
-generate_optimal_path: false
-
 path_mode: "NONE"
 
 render_options:

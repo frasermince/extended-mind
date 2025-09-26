@@ -426,7 +426,7 @@ def train_env(cfg, envs, q_key, writer, run_name, runs_dir):
                 f"runs/{run_name}",
                 f"videos/{run_name}-eval",
             )
-    if cfg.generate_optimal_path:
+    if cfg.path_mode == PathMode.SHORTEST_PATH:
         metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
     else:
         metrics_path = f"{runs_dir}/metrics.pkl"
@@ -443,8 +443,10 @@ def main(cfg):
 
     if cfg.dry_run:
         return
-    if cfg.generate_optimal_path:
-        cfg.path_mode = "SHORTEST_PATH"
+    # if cfg.generate_optimal_path:
+    #     cfg.path_mode = "SHORTEST_PATH"
+    #check that specified path mode is valid
+    assert cfg.path_mode in [mode.value for mode in PathMode], "Invalid path mode"
     assert cfg.training.num_envs == 1, "vectorized envs are not supported at the moment"
     dense_features_str = "_".join(str(f) for f in cfg.training.dense_features)
     run_name = (
@@ -460,6 +462,7 @@ def main(cfg):
 
     runs_dir = os.path.join(
         cfg.run_folder,
+        f"path_mode_{cfg.path_mode}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
