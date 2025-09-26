@@ -54,6 +54,11 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job):
     task_seconds = to_seconds(task_max_time)
     task_seconds = int(task_seconds * 1.2) # add 20% buffer time
     job_seconds = to_seconds(max_time_per_job)
+    
+    if task_seconds > job_seconds:
+        print(f"ERROR: Task time with buffer ({task_seconds}s) exceeds job time ({job_seconds}s). No tasks can fit in this job.")
+        return 0
+    
     return job_seconds // task_seconds
 
 def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None):
@@ -110,7 +115,7 @@ uv sync --offline
     return script
 
 
-def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time):
+def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time, run_folder):
         
     sweep_dict = {}
 
@@ -135,17 +140,23 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     num_tasks_per_job = compute_tasks_num_per_job(max_task_time, max_job_time)
     print(f"Number of tasks per job: {num_tasks_per_job}")
 
+    if num_tasks_per_job == 0:
+        raise ValueError(f"Cannot fit any tasks in job with time limit {max_job_time}. Task time with buffer exceeds job time.")
+
     one_job_task_confs = []
     for tc in task_confs:
 
-        run_path = construct_run_path(tc)
+        run_path = construct_run_path(tc, run_folder)
+        print(f">>>>> Run path: {run_path}")
         if check_if_file_exists(run_path):
+            
             print(f"Skipping task: {run_path} because it already exists")
             continue
         
         print(f"Adding task: {run_path}")
         one_job_task_confs.append(tc)
         if len(one_job_task_confs) == num_tasks_per_job:
+            print(f"Job complete with {len(one_job_task_confs)} tasks, yielding...")
             yield one_job_task_confs
             one_job_task_confs = []
     
@@ -154,8 +165,12 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
 
 
 def check_if_file_exists(file_path):
+    print(f">>>>> Checking if file exists: {file_path}")
     metrics_path = os.path.join(file_path, "metrics.pkl")
     metrics_optimal_path = os.path.join(file_path, "metrics_optimal_path.pkl")
+    print(f">>>>> Metrics path: {metrics_path}")
+    print(f">>>>> Metrics optimal path: {metrics_optimal_path}")
+    print(f">>>>> File exists: {os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)}")
     return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
@@ -240,7 +255,7 @@ def main():
     hyperparam_sweep_conf = read_config(args.hyperparam_sweep_conf)
     hyperparam_default_conf = read_config(args.hyperparam_default_conf)
 
-    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time)
+    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder)
 
     num_jobs = 0
     script_name = args.agent_name
