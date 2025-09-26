@@ -268,7 +268,6 @@ def main():
         print("--------------------------------")
         if not args.dry_run:
             submit_bash_script(script)
-            exit()
         num_jobs += 1
         
     print(f"Auto Job Launcher is done. There are {num_jobs} jobs.")
