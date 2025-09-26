@@ -17,9 +17,9 @@ training.dense_features:
   - [16, 16, 16]
   - [32, 32, 32]
 
-generate_optimal_path:
-  - true
-  - false
+path_mode:
+  - SHORTEST_PATH
+  - NONE
 
 wandb_project_name: "SaltAndPepper"
 wandb_entity: "glen-berseth"
