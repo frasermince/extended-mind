@@ -519,7 +519,7 @@ class SaltAndPepper(MiniGridEnv):
         ) = self._gen_unique_tiles()
         self.cell_visitation = np.zeros(shape=(size, size, 4))
         self.cell_visitation_indices_stack = []
-        self.max_visitation_count = 1000
+        self.max_visitation_count = 100
         self.segments_in_visitation_path = 25
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
