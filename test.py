@@ -3,6 +3,8 @@ from main_dqn import main, make_env, eval_env
 from env import Actions
 from omegaconf import OmegaConf
 import matplotlib.pyplot as plt
+import numpy as np
+from tqdm import trange
 
 # ============================
 # Test Configuration Fixture
@@ -38,7 +40,9 @@ def test_config():
     cfg.render_options = OmegaConf.create()
     cfg.render_options.show_grid_lines = False
     cfg.render_options.show_walls_pov = False
-    cfg.render_options.show_optimal_path = False
+    cfg.render_options.show_optimal_path = True
+    cfg.path_mode = "NONE"
+    cfg.run_folder = ""
     return cfg
 
 
@@ -52,9 +56,9 @@ def test_seeding(test_config):
     Verifies that the environment is deterministic when using the same seed,
     and produces different observations with a different seed.
     """
-    for path in [True, False]:
-        test_config.generate_optimal_path = path
-        test_config.render_options.show_optimal_path = path
+    for path in ["NONE", "SHORTEST_PATH"]:
+        test_config.path_mode = path
+        test_config.run_folder = ""
         test_config.hardcoded_actions = [Actions.forward]
 
         # Clone config with a different seed
@@ -85,9 +89,9 @@ def test_seeding(test_config):
         assert (obs_1["image"] != obs_different_seed["image"]).any()
 
         # Step forward and validate continued determinism
-        env_1.step(Actions.forward)
-        env_2.step(Actions.forward)
-        env_different_seed.step(Actions.forward)
+        env_1.step(np.array([Actions.forward.value]))
+        env_2.step(np.array([Actions.forward.value]))
+        env_different_seed.step(np.array([Actions.forward.value]))
         assert (obs_1["image"] == obs_2["image"]).all()
         assert (obs_1["image"] != obs_different_seed["image"]).any()
 
@@ -95,6 +99,119 @@ def test_seeding(test_config):
 # ================================================
 # Test 2: Agent View Matches Ground Truth Tiles
 # ================================================
+
+
+def test_visitation_path_matches_unique_tiles(test_config):
+    """
+    Verifies that the agent's observed local image matches the corresponding
+    unique tile patches from the full-grid representation.
+    """
+    test_config.hardcoded_actions = [Actions.backward]
+    test_config.capture_video = True
+    test_config.path_mode = "VISITED_CELLS"
+
+    # Create and reset environment
+    env = make_env(
+        test_config.training.env_id,
+        test_config.seed,
+        0,
+        test_config.capture_video,
+        test_config.exp_name,
+        test_config.render_options.show_grid_lines,
+        test_config.agent_view_size,
+        test_config.render_options.show_walls_pov,
+        test_config.render_options.show_optimal_path,
+        test_config.path_mode,
+    )()
+    obs, _ = env.reset(seed=test_config.seed)
+    env.unwrapped.grid.test_mode = True
+
+    terminations = np.array([False])
+    truncations = np.array([False])
+    for i in trange(10000):
+        if terminations or truncations:
+            obs, _ = env.reset(seed=test_config.seed)
+            env.unwrapped.grid.test_mode = True
+            terminations = np.array([False])
+            truncations = np.array([False])
+            continue
+        obs, _, terminations, truncations, _ = env.step(
+            np.array([np.random.choice([a.value for a in Actions])])
+        )
+        full_obs = env.unwrapped.get_full_render(
+            highlight=False, tile_size=8, reveal_all=True
+        )
+
+        # Match each observed tile in agent image with corresponding unique tile
+        top_x_cell = env.unwrapped.agent_pos[0] - 1
+        top_y_cell = env.unwrapped.agent_pos[1] - 1
+        for i in range(obs["image"].shape[0] // 8):
+            for j in range(obs["image"].shape[1] // 8):
+                i_start = i * 8
+                i_end = i_start + 8
+                j_start = j * 8
+                j_end = j_start + 8
+                cell_image_partial = obs["image"][i_start:i_end, j_start:j_end, 0]
+                cell_image_full = full_obs[
+                    (top_y_cell + i) * 8 : (top_y_cell + i + 1) * 8,
+                    (top_x_cell + j) * 8 : (top_x_cell + j + 1) * 8,
+                ]
+                plt.imsave(
+                    f"cell_image_full_grid.png",
+                    full_obs,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=255,
+                )
+                plt.close()
+                plt.imsave(f"cell_image_full.png", cell_image_full)
+                plt.close()
+                plt.imsave(
+                    f"cell_image_partial.png",
+                    cell_image_partial,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=255,
+                )
+                plt.close()
+                # Reduce cell_image_full from (8,8,3) to (8,8,1) using value mapping
+                # We'll use numpy's vectorized operations to "switch" certain RGB values to grayscale codes
+                # Example: map [255,255,255] -> 255, [0,0,0] -> 0, [0,0,255] (blue path) -> 128, else -> 64
+                cell_image_full_gray = np.zeros(
+                    cell_image_full.shape[:2], dtype=np.uint8
+                )
+                # Map white
+                mask_white = np.all(cell_image_full == [255, 255, 255], axis=-1)
+                cell_image_full_gray[mask_white] = 255
+                # Map black
+                mask_black = np.all(cell_image_full == [0, 0, 0], axis=-1)
+                cell_image_full_gray[mask_black] = 0
+
+                mask_lines = np.all(cell_image_full == [100, 100, 100], axis=-1)
+                cell_image_full_gray[mask_lines] = 255
+
+                # Map blue (path)
+                mask_blue = np.all(cell_image_full == [0, 0, 255], axis=-1)
+                cell_image_full_gray[mask_blue] = 0
+                # Map any other color to 64
+                mask_other = ~(mask_white | mask_black | mask_blue)
+                cell_image_full_gray[mask_other] = 255
+                # Expand dims to (8,8,1)
+                plt.imsave(
+                    f"cell_image_full_gray.png",
+                    cell_image_full_gray,
+                    cmap="gray",
+                    vmin=0,
+                    vmax=255,
+                )
+                plt.close()
+                if not (cell_image_partial == cell_image_full_gray).all():
+                    import pdb
+
+                    pdb.set_trace()
+
+                # Note: numpy array coordinates are [y, x], hence [j, i]
+                assert (cell_image_partial == cell_image_full_gray).all()
 
 
 def test_unique_tiles(test_config):
@@ -115,7 +232,7 @@ def test_unique_tiles(test_config):
         test_config.agent_view_size,
         test_config.render_options.show_walls_pov,
         test_config.generate_optimal_path,
-        test_config.render_options.show_optimal_path,
+        test_config.path_mode,
     )()
     obs, _ = env.reset(seed=test_config.seed)
 
