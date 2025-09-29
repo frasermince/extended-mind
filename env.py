@@ -118,9 +118,10 @@ class DirectionlessGrid(Grid):
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.path_widths = kwargs.pop("path_widths", None)
+        self.path_widths = kwargs.pop("path_widths", np.array([]))
         self.path_pixels = kwargs.pop("path_pixels", set())
-        self.path_pixels_array = kwargs.pop("path_pixels_array", [])
+        self.path_pixels_array = kwargs.pop("path_pixels_array", np.array([]))
+        self.test_mode = kwargs.pop("test_mode", False)
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -145,8 +146,27 @@ class DirectionlessGrid(Grid):
             if hasattr(grid, "unique_tiles")
             else 0
         )
+        tile_x_start = i * tile_size
+        tile_y_start = j * tile_size
 
+        # filtered_pixels = []
+        # filtered_widths = []
+        # for (px, py), (x_width, y_width) in zip(
+        #     grid.path_pixels_array, grid.path_widths
+        # ):
+        #     if (tile_y_start <= py < tile_y_start + tile_size) and (
+        #         tile_x_start <= px < tile_x_start + tile_size
+        #     ):
+        #         filtered_pixels.append((px, py))
+        #         filtered_widths.append((x_width, y_width))
+        # filtered_pixels = tuple(filtered_pixels)
+        # filtered_widths = tuple(filtered_widths)
+
+        # print(grid.path_pixels_array)
+        # print(grid.path_widths)
         if reveal_all:
+            # print("Reveal all")
+            # print(grid.path_pixels_array)
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
@@ -155,22 +175,26 @@ class DirectionlessGrid(Grid):
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
                 agent_dir,
-                tuple(sorted(grid.path_pixels)),
+                hash(grid.path_pixels_array.data.tobytes()),
+                hash(grid.path_widths.data.tobytes()),
             )
         else:
+            # print("not reveal all")
+            # print(grid.path_pixels_array)
             key: tuple[Any, ...] = (
                 tile_size,
                 base_tile_hash,
                 grid.tile_global_indices[i, j][0],
                 grid.tile_global_indices[i, j][1],
                 reveal_all,
-                tuple(sorted(grid.path_pixels)),
+                hash(grid.path_pixels_array.data.tobytes()),
+                hash(grid.path_widths.data.tobytes()),
             )
 
         key = obj.encode() + key if obj else key
 
-        if key in cls.tile_cache:
-            return cls.tile_cache[key]
+        # if key in cls.tile_cache:
+        #     return cls.tile_cache[key]
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -189,19 +213,19 @@ class DirectionlessGrid(Grid):
 
         if grid.show_optimal_path or reveal_all:
             # Draw path pixels
-            tile_x_start = i * tile_size
-            tile_y_start = j * tile_size
-
             for px in range(tile_size):
                 for py in range(tile_size):
                     global_px = tile_x_start + px
                     global_py = tile_y_start + py
 
                     if (global_px, global_py) in grid.path_pixels:
-                        path_index = grid.path_pixels_array.index(
-                            (global_px, global_py)
-                        )
-                        x_width, y_width = grid.path_widths[path_index]
+                        # Find the index in the first dimension where the inner array matches [global_px, global_py]
+                        path_index = np.where(
+                            np.all(
+                                grid.path_pixels_array == [global_px, global_py], axis=1
+                            )
+                        )[0]
+                        x_width, y_width = grid.path_widths[path_index][0]
 
                         if reveal_all:
                             img[
@@ -220,7 +244,7 @@ class DirectionlessGrid(Grid):
                             ] = 0  # Black in grayscale
 
         # Draw the grid lines (top and left edges)
-        if grid.show_grid_lines or reveal_all:
+        if (grid.show_grid_lines or reveal_all) and not grid.test_mode:
             line_thickness = 0.0625
             if reveal_all:
                 fill_coords(
@@ -233,11 +257,11 @@ class DirectionlessGrid(Grid):
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
-        if obj is not None and obj.type != "wall" and reveal_all:
+        if obj is not None and obj.type != "wall" and reveal_all and not grid.test_mode:
             obj.render(img)
 
         # Overlay the agent on top
-        if agent_dir is not None and reveal_all:
+        if agent_dir is not None and reveal_all and not grid.test_mode:
             tri_fn = point_in_circle(
                 0.5,
                 0.5,
@@ -290,10 +314,8 @@ class DirectionlessGrid(Grid):
 
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
-                if (
-                    isinstance(cell, Wall)
-                    and not reveal_all
-                    and not self.show_walls_pov
+                if isinstance(cell, Wall) and (
+                    (not reveal_all and not self.show_walls_pov) or self.test_mode
                 ):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
@@ -352,6 +374,8 @@ class DirectionlessGrid(Grid):
                 local_path_pixels.add((local_px, local_py))
                 local_path_widths.append((x_width, y_width))
                 local_path_pixels_array.append((local_px, local_py))
+        local_path_pixels_array = np.array(local_path_pixels_array)
+        local_path_widths = np.array(local_path_widths)
 
         grid = DirectionlessGrid(
             width,
@@ -367,6 +391,7 @@ class DirectionlessGrid(Grid):
             path_pixels=local_path_pixels,
             path_widths=local_path_widths,
             path_pixels_array=local_path_pixels_array,
+            test_mode=self.test_mode,
         )
 
         for j in range(0, height):
@@ -519,8 +544,10 @@ class SaltAndPepper(MiniGridEnv):
         ) = self._gen_unique_tiles()
         self.cell_visitation = np.zeros(shape=(size, size, 4))
         self.cell_visitation_indices_stack = []
-        self.max_visitation_count = 100
+        self.max_visitation_count = 1000000
         self.segments_in_visitation_path = 25
+        self.path = []
+        self.path_widths = []
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -618,11 +645,9 @@ class SaltAndPepper(MiniGridEnv):
             self.path, self.path_widths = moderately_suboptimal_path.to_pixel_list()
         elif self.path_mode == PathMode.MISLEADING_PATH:
             self.path, self.path_widths = misleading_path.to_pixel_list()
-        else:
-            self.path, self.path_widths = [], []
 
         # Update grid with path pixels
-        if self.show_optimal_path and self.path:
+        if self.show_optimal_path and not self.path_mode == PathMode.VISITED_CELLS:
             self.grid.path_pixels = set(self.path)
             self.grid.path_pixels_array = self.path
             self.grid.path_widths = self.path_widths
@@ -672,66 +697,67 @@ class SaltAndPepper(MiniGridEnv):
         return img
 
     def generate_visitation_path(self):
-        segment_count = np.minimum(
-            self.segments_in_visitation_path, np.sum(self.cell_visitation > 0)
-        )
-        flat = self.cell_visitation.flatten()
-        order = np.lexsort(
-            (np.arange(flat.size), -flat)
-        )  # primary: -flat, secondary: index
-        top_indices = order[:segment_count]
-        # Vectorized construction of per-tile vertical path pixels
+        if self.step_count % 1000 == 0:
+            segment_count = np.minimum(
+                self.segments_in_visitation_path, np.sum(self.cell_visitation > 0)
+            )
+            flat = self.cell_visitation.flatten()
+            order = np.lexsort(
+                (np.arange(flat.size), -flat)
+            )  # primary: -flat, secondary: index
+            top_indices = order[:segment_count]
+            # Vectorized construction of per-tile vertical path pixels
 
-        r, c, action = np.unravel_index(top_indices, self.cell_visitation.shape)
+            r, c, action = np.unravel_index(top_indices, self.cell_visitation.shape)
 
-        left_x_pix = (
-            (r * TILE_PIXELS)[:, None]
-            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
-        ).ravel()
-        left_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            left_x_pix = (
+                (r * TILE_PIXELS)[:, None]
+                + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+            ).ravel()
+            left_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
 
-        up_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
-        up_y_pix = (
-            (c * TILE_PIXELS)[:, None]
-            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
-        ).ravel()
+            up_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            up_y_pix = (
+                (c * TILE_PIXELS)[:, None]
+                + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+            ).ravel()
 
-        right_x_pix = (
-            (r * TILE_PIXELS)[:, None]
-            + np.arange(TILE_PIXELS + 1)
-            + TILE_PIXELS // 2
-            - 1
-        ).ravel()
-        right_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            right_x_pix = (
+                (r * TILE_PIXELS)[:, None]
+                + np.arange(TILE_PIXELS + 1)
+                + TILE_PIXELS // 2
+                - 1
+            ).ravel()
+            right_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
 
-        down_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
-        down_y_pix = (
-            (c * TILE_PIXELS)[:, None]
-            + np.arange(TILE_PIXELS + 1)
-            + TILE_PIXELS // 2
-            - 1
-        ).ravel()
+            down_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            down_y_pix = (
+                (c * TILE_PIXELS)[:, None]
+                + np.arange(TILE_PIXELS + 1)
+                + TILE_PIXELS // 2
+                - 1
+            ).ravel()
 
-        action = action.repeat(TILE_PIXELS + 1)
+            action = action.repeat(TILE_PIXELS + 1)
 
-        x_pix = np.choose(
-            action,
-            [left_x_pix, up_x_pix, right_x_pix, down_x_pix],
-        )
-        y_pix = np.choose(action, [left_y_pix, up_y_pix, right_y_pix, down_y_pix])
+            x_pix = np.choose(
+                action,
+                [left_x_pix, up_x_pix, right_x_pix, down_x_pix],
+            )
+            y_pix = np.choose(action, [left_y_pix, up_y_pix, right_y_pix, down_y_pix])
 
-        coords = np.column_stack((x_pix, y_pix)).tolist()
+            self.path = np.column_stack((x_pix, y_pix))
 
-        self.path = list(map(tuple, coords))
-        self.path_widths = np.where(
-            np.logical_or(action[:, None] == 1, action[:, None] == 3),
-            np.tile([1, 0], (len(self.path), 1)),
-            np.tile([0, 1], (len(self.path), 1)),
-        )
+            path_list = list(map(tuple, self.path.tolist()))
+            self.path_widths = np.where(
+                np.logical_or(action[:, None] == 1, action[:, None] == 3),
+                np.tile([1, 0], (len(self.path), 1)),
+                np.tile([0, 1], (len(self.path), 1)),
+            )
 
-        self.grid.path_pixels = set(self.path)
-        self.grid.path_pixels_array = self.path
-        self.grid.path_widths = self.path_widths
+            self.grid.path_pixels = set(path_list)
+            self.grid.path_pixels_array = self.path
+            self.grid.path_widths = self.path_widths
 
     def gen_obs_grid(self, agent_view_size=None):
         """
@@ -869,27 +895,32 @@ class SaltAndPepper(MiniGridEnv):
             self.actions.backward: (0, 1),
         }
 
-        if action.item() in action_deltas:
-            dx, dy = action_deltas[action.item()]
-            fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
-            fwd_cell = self.grid.get(*fwd_pos)
-            if fwd_cell is None or fwd_cell.can_overlap():
-                self.update_visitation_count(
-                    self.agent_pos,
-                    action.item(),
-                )
-                self.agent_pos = tuple(fwd_pos)
+        try:
+            if action.item() in action_deltas:
+                dx, dy = action_deltas[action.item()]
+                fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
+                fwd_cell = self.grid.get(*fwd_pos)
+                if fwd_cell is None or fwd_cell.can_overlap():
+                    self.update_visitation_count(
+                        self.agent_pos,
+                        action.item(),
+                    )
+                    self.agent_pos = tuple(fwd_pos)
 
-            if fwd_cell is not None and fwd_cell.type == "goal":
-                terminated = True
-                reward = self._reward()
+                if fwd_cell is not None and fwd_cell.type == "goal":
+                    terminated = True
+                    reward = self._reward()
 
-        # Done action (not used by default)
-        elif action == self.actions.done:
-            pass
+            # Done action (not used by default)
+            elif action == self.actions.done:
+                pass
 
-        else:
-            raise ValueError(f"Unknown action: {action}")
+            else:
+                raise ValueError(f"Unknown action: {action}")
+        except:
+            import pdb
+
+            pdb.set_trace()
 
         if self.step_count >= self.max_steps:
             truncated = True
