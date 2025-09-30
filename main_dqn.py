@@ -45,6 +45,7 @@ def make_env(
     show_walls_pov,
     show_optimal_path,
     path_mode,
+    show_landmarks,
 ):
     def thunk():
         if capture_video and idx == 0:
@@ -57,6 +58,7 @@ def make_env(
                 seed=seed,
                 show_optimal_path=show_optimal_path,
                 path_mode=path_mode,
+                show_landmarks=show_landmarks,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -72,6 +74,7 @@ def make_env(
                 seed=seed,
                 show_optimal_path=show_optimal_path,
                 path_mode=path_mode,
+                show_landmarks=show_landmarks,
             )
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env = gym.wrappers.Autoreset(env)
@@ -515,6 +518,7 @@ def main(cfg):
         cfg.render_options.show_walls_pov,
         cfg.render_options.show_optimal_path,
         cfg.path_mode,
+        cfg.show_landmarks,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete

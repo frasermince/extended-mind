@@ -7,6 +7,7 @@ from minigrid.utils.rendering import (
     fill_coords,
     point_in_circle,
     point_in_rect,
+    point_in_triangle,
 )
 
 import gymnasium as gym
@@ -25,6 +26,63 @@ class PathDirection(IntEnum):
     LEFT = 2
     RIGHT = 3
     DOWN = 4
+
+# Local helper: Manhattan ball (a diamond / rotated square)
+def point_in_diamond(cx: float, cy: float, r: float):
+    def fn(x, y):
+        return abs(x - cx) + abs(y - cy) <= r
+    return fn
+
+class Landmark(WorldObj):
+    def __init__(self, shape="circle", render_color=(0, 100, 0), *, size=1, tile_offset=(0, 0)):
+        super().__init__("box", "green")
+        self.shape = shape
+        self.render_color = render_color   # RGB for full render
+        self.size = size                   # 1 = normal (1×1), 2 = big (2×2)
+        self.tile_offset = tile_offset     # (ox, oy) ∈ {(0,0),(1,0),(0,1),(1,1)} for 2×2
+
+    def can_overlap(self):
+        return False
+
+    def _apply_big_transform(self, fn):
+        """
+        Wrap a predicate fn(x, y) defined on [0,1]×[0,1] (global big shape space),
+        so it can be applied to the local tile’s [0,1]×[0,1] by mapping:
+            (x_local, y_local) -> ((ox + x_local)/2, (oy + y_local)/2)
+        where (ox, oy) is this tile’s offset in the 2×2 big shape.
+        """
+        ox, oy = self.tile_offset
+        def wrapped(x, y):
+            return fn((ox + x) / 2.0, (oy + y) / 2.0)
+        return wrapped
+
+    def render(self, img):
+        # grayscale POV vs full RGB
+        if img.shape[-1] == 1:
+            color = (160,)  # mid-gray so it stands out against black path
+        else:
+            color = self.render_color
+
+        # define big-shape predicates in global [0,1] space (for the 2×2 as a whole)
+        if self.shape == "circle":
+            # same relative radius as before (0.4 of the *big* shape width)
+            base_fn = point_in_circle(0.5, 0.5, 0.4)
+        elif self.shape == "triangle":
+            base_fn = point_in_triangle((0.5, 0.1), (0.1, 0.9), (0.9, 0.9))
+        elif self.shape == "square":
+            base_fn = point_in_rect(0.3, 0.9, 0.3, 0.9)
+        elif self.shape == "diamond":
+            base_fn = point_in_diamond(0.5, 0.5, 0.4)
+        else:
+            return
+
+        # if size==2, render the appropriate quadrant by remapping coords;
+        # if size==1, draw as usual.
+        if self.size == 2:
+            fn = self._apply_big_transform(base_fn)
+            fill_coords(img, fn, color)
+        else:
+            fill_coords(img, base_fn, color)
 
 
 class Path:
@@ -117,6 +175,7 @@ class DirectionlessGrid(Grid):
         self.show_grid_lines = kwargs.pop("show_grid_lines", False)
         self.show_walls_pov = kwargs.pop("show_walls_pov", False)
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
+        self.show_landmarks = kwargs.pop("show_landmarks", True)
         self.pad_width = kwargs.pop("pad_width", None)
         self.path_widths = kwargs.pop("path_widths", None)
         self.path_pixels = kwargs.pop("path_pixels", set())
@@ -233,7 +292,7 @@ class DirectionlessGrid(Grid):
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
-        if obj is not None and obj.type != "wall" and reveal_all:
+        if obj is not None and obj.type != "wall":
             obj.render(img)
 
         # Overlay the agent on top
@@ -362,6 +421,7 @@ class DirectionlessGrid(Grid):
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
             show_optimal_path=self.show_optimal_path,
+            show_landmarks=self.show_landmarks,
             pad_width=self.pad_width,
             seed=self.seed,
             path_pixels=local_path_pixels,
@@ -466,6 +526,7 @@ class SaltAndPepper(MiniGridEnv):
         show_grid_lines = kwargs.pop("show_grid_lines", False)
         show_walls_pov = kwargs.pop("show_walls_pov", False)
         show_optimal_path = kwargs.pop("show_optimal_path", True)
+        show_landmarks = kwargs.pop("show_landmarks", False)
         agent_view_size = kwargs.pop("agent_view_size", 5)
         path_mode = kwargs.pop("path_mode", "NONE")
         # self.invisible_goal = kwargs.pop("invisible_goal", False)
@@ -482,6 +543,7 @@ class SaltAndPepper(MiniGridEnv):
         self.show_grid_lines = show_grid_lines
         self.show_walls_pov = show_walls_pov
         self.show_optimal_path = show_optimal_path
+        self.show_landmarks = show_landmarks
         self.path_mode = PathMode[path_mode]
         self.actions = Actions
         image_observation_space = gym.spaces.Box(
@@ -532,6 +594,17 @@ class SaltAndPepper(MiniGridEnv):
     @staticmethod
     def _gen_mission():
         return "get to the green goal square"
+    
+    def put_big_landmark(self, shape, rgb, x, y):
+        """
+        Place a single logical landmark that spans 2×2 tiles with top-left at (x, y).
+        We actually place 4 Landmark instances, each told which quadrant (tile_offset)
+        to render, so visually they compose one large shape. All 4 tiles block movement.
+        """
+        for ox in (0, 1):
+            for oy in (0, 1):
+                self.put_obj(Landmark(shape, rgb, size=2, tile_offset=(ox, oy)), x + ox, y + oy)
+
 
     def _gen_unique_tiles(self):
         # Use a fixed random state for generating tiles to ensure consistency
@@ -590,6 +663,7 @@ class SaltAndPepper(MiniGridEnv):
             show_grid_lines=self.show_grid_lines,
             show_walls_pov=self.show_walls_pov,
             show_optimal_path=self.show_optimal_path,
+            show_landmarks=self.show_landmarks,
             unique_tiles=self.unique_tiles,
             padded_unique_tiles=self.padded_unique_tiles,
             pad_width=self.pad_width,
@@ -607,6 +681,17 @@ class SaltAndPepper(MiniGridEnv):
         self.goal_position = (2, 3)
 
         self.put_obj(Goal(), *self.goal_position)
+
+        # --- Place landmarks (blocking movement) ---
+        if self.show_landmarks:
+            # Dark green circle (2×2)
+            self.put_big_landmark("circle", (0, 100, 0), 5, 5)
+            # Orange triangle (2×2)
+            self.put_big_landmark("triangle", (255, 165, 0), 11, 11)
+            # Purple square (2×2)
+            self.put_big_landmark("square", (128, 0, 128), 10, 2)
+            # Pink diamond (1×1)
+            self.put_obj(Landmark("diamond", (255, 105, 180), size=1), 3, height - 3)
 
         self.mission = "get to the green goal square"
 
