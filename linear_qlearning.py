@@ -269,8 +269,8 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
         agent_view_size=cfg.agent_view_size,
         show_walls_pov=cfg.render_options.show_walls_pov,
         seed=cfg.seed,
-        generate_optimal_path=cfg.generate_optimal_path,
         show_optimal_path=cfg.render_options.show_optimal_path,
+        path_mode=cfg.path_mode,
     )
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.Autoreset(env)
@@ -443,10 +443,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     print(f"Min episode length: {min_episode_length}")
     
     # Save final metrics to pickle file
-    if cfg.generate_optimal_path:
-        metrics_path = f"{runs_dir}/metrics_optimal_path.pkl"
-    else:
-        metrics_path = f"{runs_dir}/metrics.pkl"
+    metrics_path = f"{runs_dir}/metrics.pkl"
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
@@ -463,7 +460,7 @@ def main(cfg):
     runs_dir = os.path.join(
         cfg.run_folder,
         f"agent_name_{cfg.agent_name}",
-        f"generate_optimal_path_{cfg.generate_optimal_path}",
+        f"path_mode_{cfg.path_mode}",
         f"step_size_{step_size_str}",
         f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
         f"seed_{cfg.seed}",
@@ -486,8 +483,8 @@ def main(cfg):
         agent_view_size=cfg.agent_view_size,
         show_walls_pov=cfg.render_options.show_walls_pov,
         seed=cfg.seed,
-        generate_optimal_path=cfg.generate_optimal_path,
         show_optimal_path=cfg.render_options.show_optimal_path,
+        path_mode=cfg.path_mode,
     )
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.Autoreset(env)

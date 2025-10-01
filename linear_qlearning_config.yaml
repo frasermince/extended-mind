@@ -4,7 +4,7 @@ run_folder: "/home/esraa1/scratch/extended-mind/runs"
 seed: 1
 agent_view_size: 3
 max_steps: 1000
-generate_optimal_path: false
+path_mode: "NONE"
 
 render_options:
   show_grid_lines: false
@@ -17,7 +17,7 @@ training:
   discount: 0.95
   step_size: 1e-3
   start_epsilon: 1.0
-  end_epsilon: 0.1
+  end_epsilon: 0.01
   exploration_fraction: 0.5
   agent_pixel_view_edge_dim: 20
   q_network_type: "flax"
