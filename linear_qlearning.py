@@ -403,7 +403,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     for global_step in range(1, total_timesteps + 1):
         rng, key = jax.random.split(rng)
         a = agent.select_action(obs["image"], key, global_step)
-        obs_next, r, terminated, truncated, _ = env.step(a)
+        obs_next, r, terminated, truncated, _ = env.step(jnp.array(a))
         done = terminated or truncated
         
         # Log metrics similar to main_dqn
