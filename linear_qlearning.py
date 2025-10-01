@@ -398,6 +398,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     print(f"Agent start position: {unwrapped_env.agent_pos}")
     print(f"Goal position: {unwrapped_env.goal_position}")
     print("Optimal policy expected steps: ", abs(unwrapped_env.agent_pos[0] - unwrapped_env.goal_position[0]) + abs(unwrapped_env.agent_pos[1] - unwrapped_env.goal_position[1]))
+    print(f"Starting training for {total_timesteps} timesteps...")
     
     for global_step in range(1, total_timesteps + 1):
         rng, key = jax.random.split(rng)
@@ -438,6 +439,10 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         if global_step % 100 == 0:
             sps = int(global_step / (time.time() - start_time))
             log_metric(writer, metrics_dict, "charts/SPS", sps, global_step)
+        
+        # Progress indicator every 10000 steps
+        if global_step % 10000 == 0:
+            print(f"Training progress: {global_step}/{total_timesteps} steps completed")
 
     min_episode_length = min(episode_lengths) if episode_lengths else 0
     print(f"Min episode length: {min_episode_length}")
