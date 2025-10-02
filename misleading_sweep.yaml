@@ -1,0 +1,26 @@
+training.learning_rate:
+  - 1e-2
+  - 5e-3
+  - 1e-3
+  - 5e-4
+  - 1e-4
+  - 5e-5
+  - 1e-5
+
+training.dense_features:
+  - [4, 4]
+  - [8, 8]
+  - [16, 16]
+  - [32, 32]
+  - [4, 4, 4]
+  - [8, 8, 8]
+  - [16, 16, 16]
+  - [32, 32, 32]
+
+path_mode:
+  - MISLEADING_PATH
+
+wandb_project_name: "SaltAndPepper"
+wandb_entity: "glen-berseth"
+track: true
+track_offline: true
