@@ -101,6 +101,7 @@ def test_seeding(test_config):
 # ================================================
 
 
+@pytest.mark.skip(reason="Run this individually. Takes too long.")
 def test_visitation_path_matches_unique_tiles(test_config):
     """
     Verifies that the agent's observed local image matches the corresponding

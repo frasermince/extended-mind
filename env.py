@@ -123,7 +123,7 @@ class Path:
             fragment_pixel_list, fragment_path_width = fragment.to_pixel_list()
             pixel_list.extend(fragment_pixel_list)
             path_widths.extend(fragment_path_width)
-        return pixel_list, path_widths
+        return np.array(pixel_list), np.array(path_widths)
 
 
 class PathFragment:
@@ -163,19 +163,26 @@ shortest_path = Path(
 
 slightly_suboptimal_path = Path(
     [
-        PathFragment((60, 108), PathDirection.RIGHT, 8),
-        PathFragment((68, 108), PathDirection.UP, 8),
-        PathFragment((68, 100), PathDirection.LEFT, 48),
-        PathFragment((20, 100), PathDirection.UP, 73),
+        PathFragment((60, 108), PathDirection.RIGHT, 16),
+        PathFragment((76, 108), PathDirection.UP, 8),
+        PathFragment((76, 100), PathDirection.LEFT, 16),
+        PathFragment((60, 100), PathDirection.UP, 72),
+        PathFragment((60, 28), PathDirection.LEFT, 40),
     ]
 )
 
 moderately_suboptimal_path = Path(
     [
-        PathFragment((60, 108), PathDirection.RIGHT, 24),
-        PathFragment((84, 108), PathDirection.UP, 16),
-        PathFragment((84, 92), PathDirection.LEFT, 64),
-        PathFragment((20, 92), PathDirection.UP, 65),
+        PathFragment((60, 108), PathDirection.RIGHT, 32),
+        PathFragment((92, 108), PathDirection.UP, 16),
+        PathFragment((92, 92), PathDirection.LEFT, 32),
+        PathFragment((60, 92), PathDirection.UP, 16),
+        PathFragment((60, 76), PathDirection.LEFT, 16),
+        PathFragment((44, 76), PathDirection.UP, 16),
+        PathFragment((44, 60), PathDirection.LEFT, 16),
+        PathFragment((28, 60), PathDirection.UP, 16),
+        PathFragment((28, 44), PathDirection.LEFT, 8),
+        PathFragment((20, 44), PathDirection.UP, 16),
     ]
 )
 
@@ -235,24 +242,7 @@ class DirectionlessGrid(Grid):
         tile_x_start = i * tile_size
         tile_y_start = j * tile_size
 
-        # filtered_pixels = []
-        # filtered_widths = []
-        # for (px, py), (x_width, y_width) in zip(
-        #     grid.path_pixels_array, grid.path_widths
-        # ):
-        #     if (tile_y_start <= py < tile_y_start + tile_size) and (
-        #         tile_x_start <= px < tile_x_start + tile_size
-        #     ):
-        #         filtered_pixels.append((px, py))
-        #         filtered_widths.append((x_width, y_width))
-        # filtered_pixels = tuple(filtered_pixels)
-        # filtered_widths = tuple(filtered_widths)
-
-        # print(grid.path_pixels_array)
-        # print(grid.path_widths)
         if reveal_all:
-            # print("Reveal all")
-            # print(grid.path_pixels_array)
             key: tuple[Any, ...] = (
                 tile_size,
                 obj,
@@ -265,8 +255,6 @@ class DirectionlessGrid(Grid):
                 hash(grid.path_widths.data.tobytes()),
             )
         else:
-            # print("not reveal all")
-            # print(grid.path_pixels_array)
             key: tuple[Any, ...] = (
                 tile_size,
                 base_tile_hash,
@@ -635,8 +623,8 @@ class SaltAndPepper(MiniGridEnv):
         self.cell_visitation_indices_stack = []
         self.max_visitation_count = 1000000
         self.segments_in_visitation_path = 25
-        self.path = []
-        self.path_widths = []
+        self.path = np.array([])
+        self.path_widths = np.array([])
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -769,7 +757,7 @@ class SaltAndPepper(MiniGridEnv):
 
         # Update grid with path pixels
         if self.show_optimal_path and not self.path_mode == PathMode.VISITED_CELLS:
-            self.grid.path_pixels = set(self.path)
+            self.grid.path_pixels = set(map(tuple, self.path.tolist()))
             self.grid.path_pixels_array = self.path
             self.grid.path_widths = self.path_widths
 
