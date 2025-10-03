@@ -42,7 +42,9 @@ class Landmark(WorldObj):
         self.tile_offset = tile_offset     # (ox, oy) ∈ {(0,0),(1,0),(0,1),(1,1)} for 2×2
 
     def can_overlap(self):
-        return False
+        # Landmarks are visual only and should not block movement.
+        # Allow agents to overlap / walk through landmarks.
+        return True
 
     def _apply_big_transform(self, fn):
         """
@@ -73,6 +75,24 @@ class Landmark(WorldObj):
             base_fn = point_in_rect(0.3, 0.9, 0.3, 0.9)
         elif self.shape == "diamond":
             base_fn = point_in_diamond(0.5, 0.5, 0.4)
+        elif self.shape == "crescent":
+            # Crescent made from outer circle minus an offset inner circle
+            outer = point_in_circle(0.5, 0.5, 0.4)
+            inner = point_in_circle(0.62, 0.48, 0.28)
+            base_fn = lambda x, y: outer(x, y) and not inner(x, y)
+        elif self.shape == "ring":
+            # Ring: outer circle with a smaller concentric inner hole
+            outer = point_in_circle(0.5, 0.5, 0.45)
+            inner = point_in_circle(0.5, 0.5, 0.25)
+            base_fn = lambda x, y: outer(x, y) and not inner(x, y)
+        elif self.shape == "cross":
+            # Cross (plus sign) composed of a vertical and a horizontal bar
+            vbar = point_in_rect(0.4, 0.6, 0.15, 0.85)
+            hbar = point_in_rect(0.15, 0.85, 0.4, 0.6)
+            base_fn = lambda x, y: vbar(x, y) or hbar(x, y)
+        elif self.shape == "rectangle":
+            # Rectangle covers a wide central band but half the height
+            base_fn = point_in_rect(0.15, 0.85, 0.375, 0.625)
         else:
             return
 
@@ -599,7 +619,7 @@ class SaltAndPepper(MiniGridEnv):
         """
         Place a single logical landmark that spans 2×2 tiles with top-left at (x, y).
         We actually place 4 Landmark instances, each told which quadrant (tile_offset)
-        to render, so visually they compose one large shape. All 4 tiles block movement.
+        to render, so visually they compose one large shape.
         """
         for ox in (0, 1):
             for oy in (0, 1):
@@ -682,16 +702,24 @@ class SaltAndPepper(MiniGridEnv):
 
         self.put_obj(Goal(), *self.goal_position)
 
-        # --- Place landmarks (blocking movement) ---
+        # --- Place landmarks ---
         if self.show_landmarks:
             # Dark green circle (2×2)
-            self.put_big_landmark("circle", (0, 100, 0), 5, 5)
+            self.put_big_landmark("circle", (0, 100, 0), 4, 4)
             # Orange triangle (2×2)
             self.put_big_landmark("triangle", (255, 165, 0), 11, 11)
             # Purple square (2×2)
             self.put_big_landmark("square", (128, 0, 128), 10, 2)
-            # Pink diamond (1×1)
-            self.put_obj(Landmark("diamond", (255, 105, 180), size=1), 3, height - 3)
+            # Pink diamond (2×2)
+            self.put_big_landmark("diamond", (255, 105, 180), 3, 11)
+            # Teal crescent (2×2)
+            self.put_big_landmark("crescent", (0, 128, 128), 7, 8)
+            # Yellow cross (2×2)
+            self.put_big_landmark("cross", (255, 255, 0),9, 5)
+            # Brown rectangle (2×2)
+            self.put_big_landmark("rectangle", (165, 42, 42), 2, 1)
+            # Dark blue ring (2×2)
+            self.put_big_landmark("ring", (0, 0, 139), 2, 8)
 
         self.mission = "get to the green goal square"
 
