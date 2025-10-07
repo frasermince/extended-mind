@@ -16,6 +16,7 @@ import numpy as np
 from typing import Any, SupportsFloat
 
 from enum import IntEnum, StrEnum
+import matplotlib.pyplot as plt
 
 
 TILE_PIXELS = 8
@@ -234,38 +235,39 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
-        base_tile_hash = (
-            hash(grid.unique_tiles[i, j].tobytes())
-            if hasattr(grid, "unique_tiles")
-            else 0
-        )
+        # base_tile_hash = (
+        #     hash(grid.unique_tiles[i, j].tobytes())
+        #     if hasattr(grid, "unique_tiles")
+        #     else 0
+        # )
         tile_x_start = i * tile_size
         tile_y_start = j * tile_size
 
-        if reveal_all:
-            key: tuple[Any, ...] = (
-                tile_size,
-                obj,
-                base_tile_hash,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
-                reveal_all,
-                agent_dir,
-                hash(grid.path_pixels_array.data.tobytes()),
-                hash(grid.path_widths.data.tobytes()),
-            )
-        else:
-            key: tuple[Any, ...] = (
-                tile_size,
-                base_tile_hash,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
-                reveal_all,
-                hash(grid.path_pixels_array.data.tobytes()),
-                hash(grid.path_widths.data.tobytes()),
-            )
+        # if reveal_all:
+        #     key: tuple[Any, ...] = (
+        #         tile_size,
+        #         obj,
+        #         base_tile_hash,
+        #         grid.tile_global_indices[i, j][0],
+        #         grid.tile_global_indices[i, j][1],
+        #         reveal_all,
+        #         agent_dir,
+        #         hash(grid.path_pixels_array.data.tobytes()),
+        #         hash(grid.path_widths.data.tobytes()),
+        #     )
+        # else:
+        #     key: tuple[Any, ...] = (
+        #         tile_size,
+        #         base_tile_hash,
+        #         grid.tile_global_indices[i, j][0],
+        #         grid.tile_global_indices[i, j][1],
+        #         reveal_all,
+        #         agent_dir,
+        #         hash(grid.path_pixels_array.data.tobytes()),
+        #         hash(grid.path_widths.data.tobytes()),
+        #     )
 
-        key = obj.encode() + key if obj else key
+        # key = obj.encode() + key if obj else key
 
         # if key in cls.tile_cache:
         #     return cls.tile_cache[key]
@@ -331,7 +333,7 @@ class DirectionlessGrid(Grid):
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
-        if obj is not None and obj.type != "wall" and reveal_all and not grid.test_mode:
+        if obj is not None and obj.type != "wall" and not grid.test_mode:
             obj.render(img)
 
         # Overlay the agent on top
@@ -341,13 +343,9 @@ class DirectionlessGrid(Grid):
                 0.5,
                 0.3,
             )
-
             # Rotate the agent based on its direction
             # tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir)
             fill_coords(img, tri_fn, (255, 0, 0))
-
-        # Cache the rendered tile
-        cls.tile_cache[key] = img
 
         return img
 
@@ -378,11 +376,9 @@ class DirectionlessGrid(Grid):
         else:
             img = np.zeros(shape=(height_px, width_px, 1), dtype=np.uint8)
 
-        # Render the grid
         for j in range(0, self.height):
             for i in range(0, self.width):
                 cell = self.get(i, j)
-
                 agent_here = np.array_equal(agent_pos, (i, j))
                 assert highlight_mask is not None
 
@@ -480,7 +476,6 @@ class DirectionlessGrid(Grid):
                     v = Wall()
 
                 grid.set(i, j, v)
-
         return grid
 
 
@@ -793,12 +788,11 @@ class SaltAndPepper(MiniGridEnv):
         """
         Render an agent's POV observation for visualization
         """
-        grid, vis_mask = self.gen_obs_grid()
+        grid, vis_mask, agent_pos = self.gen_obs_grid()
 
-        # Render the whole grid
         img = grid.render(
             tile_size,
-            agent_pos=(self.agent_view_size // 2, self.agent_view_size - 1),
+            agent_pos=agent_pos,
             agent_dir=3,
             highlight_mask=vis_mask,
         )
@@ -897,27 +891,20 @@ class SaltAndPepper(MiniGridEnv):
         else:
             vis_mask = np.ones(shape=(grid.width, grid.height), dtype=bool)
 
-        # Make it so the agent sees what it's carrying
-        # We do this by placing the carried object at the agent's position
-        # in the agent's partially observable view
         agent_pos = grid.width // 2, grid.height // 2
-        if self.carrying:
-            grid.set(*agent_pos, self.carrying)
-        else:
-            grid.set(*agent_pos, None)
 
-        return grid, vis_mask
+        return grid, vis_mask, agent_pos
 
     def gen_obs(self):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        grid, vis_mask = self.gen_obs_grid()
+        grid, vis_mask, agent_pos = self.gen_obs_grid()
 
         # Encode the partially observable view into a numpy array
         image = grid.render(
             TILE_PIXELS,
-            self.agent_pos,
+            agent_pos,
             self.agent_dir,
             highlight_mask=None,
             reveal_all=False,
@@ -942,7 +929,7 @@ class SaltAndPepper(MiniGridEnv):
         Render a non-paratial observation for visualization
         """
         # Compute which cells are visible to the agent
-        _, vis_mask = self.gen_obs_grid()
+        _, vis_mask, _ = self.gen_obs_grid()
 
         # Compute the world coordinates of the bottom-left corner
         # of the agent's view area
@@ -1038,5 +1025,8 @@ class SaltAndPepper(MiniGridEnv):
             self.render()
 
         obs = self.gen_obs()
+        # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+        # plt.savefig("step.png")
+        # plt.close()
 
         return obs, reward, terminated, truncated, {}

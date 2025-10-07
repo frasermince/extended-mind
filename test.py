@@ -41,6 +41,8 @@ def test_config():
     cfg.render_options.show_grid_lines = False
     cfg.render_options.show_walls_pov = False
     cfg.render_options.show_optimal_path = True
+
+    cfg.show_landmarks = False
     cfg.path_mode = "NONE"
     cfg.run_folder = ""
     return cfg
@@ -123,6 +125,7 @@ def test_visitation_path_matches_unique_tiles(test_config):
         test_config.render_options.show_walls_pov,
         test_config.render_options.show_optimal_path,
         test_config.path_mode,
+        test_config.show_landmarks,
     )()
     obs, _ = env.reset(seed=test_config.seed)
     env.unwrapped.grid.test_mode = True
@@ -234,6 +237,7 @@ def test_unique_tiles(test_config):
         test_config.render_options.show_walls_pov,
         test_config.generate_optimal_path,
         test_config.path_mode,
+        test_config.show_landmarks,
     )()
     obs, _ = env.reset(seed=test_config.seed)
 
