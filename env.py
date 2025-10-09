@@ -16,7 +16,6 @@ import numpy as np
 from typing import Any, SupportsFloat
 
 from enum import IntEnum, StrEnum
-import matplotlib.pyplot as plt
 
 
 TILE_PIXELS = 8
@@ -215,7 +214,7 @@ class DirectionlessGrid(Grid):
         self.path_widths = kwargs.pop("path_widths", np.array([]))
         self.path_pixels = kwargs.pop("path_pixels", set())
         self.path_pixels_array = kwargs.pop("path_pixels_array", np.array([]))
-        self.test_mode = kwargs.pop("test_mode", False)
+        self.render_objects = kwargs.pop("render_objects", True)
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -235,42 +234,8 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
-        # base_tile_hash = (
-        #     hash(grid.unique_tiles[i, j].tobytes())
-        #     if hasattr(grid, "unique_tiles")
-        #     else 0
-        # )
         tile_x_start = i * tile_size
         tile_y_start = j * tile_size
-
-        # if reveal_all:
-        #     key: tuple[Any, ...] = (
-        #         tile_size,
-        #         obj,
-        #         base_tile_hash,
-        #         grid.tile_global_indices[i, j][0],
-        #         grid.tile_global_indices[i, j][1],
-        #         reveal_all,
-        #         agent_dir,
-        #         hash(grid.path_pixels_array.data.tobytes()),
-        #         hash(grid.path_widths.data.tobytes()),
-        #     )
-        # else:
-        #     key: tuple[Any, ...] = (
-        #         tile_size,
-        #         base_tile_hash,
-        #         grid.tile_global_indices[i, j][0],
-        #         grid.tile_global_indices[i, j][1],
-        #         reveal_all,
-        #         agent_dir,
-        #         hash(grid.path_pixels_array.data.tobytes()),
-        #         hash(grid.path_widths.data.tobytes()),
-        #     )
-
-        # key = obj.encode() + key if obj else key
-
-        # if key in cls.tile_cache:
-        #     return cls.tile_cache[key]
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -320,7 +285,7 @@ class DirectionlessGrid(Grid):
                             ] = 0  # Black in grayscale
 
         # Draw the grid lines (top and left edges)
-        if (grid.show_grid_lines or reveal_all) and not grid.test_mode:
+        if (grid.show_grid_lines or reveal_all) and grid.render_objects:
             line_thickness = 0.0625
             if reveal_all:
                 fill_coords(
@@ -333,11 +298,11 @@ class DirectionlessGrid(Grid):
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
-        if obj is not None and obj.type != "wall" and not grid.test_mode:
+        if obj is not None and obj.type != "wall" and grid.render_objects:
             obj.render(img)
 
         # Overlay the agent on top
-        if agent_dir is not None and reveal_all and not grid.test_mode:
+        if agent_dir is not None and reveal_all and grid.render_objects:
             tri_fn = point_in_circle(
                 0.5,
                 0.5,
@@ -385,7 +350,8 @@ class DirectionlessGrid(Grid):
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
                 if isinstance(cell, Wall) and (
-                    (not reveal_all and not self.show_walls_pov) or self.test_mode
+                    (not reveal_all and not self.show_walls_pov)
+                    or not self.render_objects
                 ):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
@@ -462,7 +428,7 @@ class DirectionlessGrid(Grid):
             path_pixels=local_path_pixels,
             path_widths=local_path_widths,
             path_pixels_array=local_path_pixels_array,
-            test_mode=self.test_mode,
+            render_objects=self.render_objects,
         )
 
         for j in range(0, height):

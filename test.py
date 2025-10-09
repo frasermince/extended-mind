@@ -128,14 +128,14 @@ def test_visitation_path_matches_unique_tiles(test_config):
         test_config.show_landmarks,
     )()
     obs, _ = env.reset(seed=test_config.seed)
-    env.unwrapped.grid.test_mode = True
+    env.unwrapped.grid.render_objects = False
 
     terminations = np.array([False])
     truncations = np.array([False])
     for i in trange(10000):
         if terminations or truncations:
             obs, _ = env.reset(seed=test_config.seed)
-            env.unwrapped.grid.test_mode = True
+            env.unwrapped.grid.render_objects = False
             terminations = np.array([False])
             truncations = np.array([False])
             continue
