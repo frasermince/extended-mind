@@ -29,7 +29,7 @@ experiment_description: "logging-test"
 
 agent_view_size: 3
 
-path_mode: "NONE" # NONE, SHORTEST_PATH, SLIGHTLY_SUBOPTIMAL_PATH, SUBOPTIMAL_PATH, MISLEADING_PATH
+path_mode: "NONE" # NONE, SHORTEST_PATH, SLIGHTLY_SUBOPTIMAL_PATH, SUBOPTIMAL_PATH, MISLEADING_PATH, VISITED_CELLS
 
 show_landmarks: false
 
