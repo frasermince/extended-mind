@@ -27,19 +27,24 @@ class PathDirection(IntEnum):
     RIGHT = 3
     DOWN = 4
 
+
 # Local helper: Manhattan ball (a diamond / rotated square)
 def point_in_diamond(cx: float, cy: float, r: float):
     def fn(x, y):
         return abs(x - cx) + abs(y - cy) <= r
+
     return fn
 
+
 class Landmark(WorldObj):
-    def __init__(self, shape="circle", render_color=(0, 100, 0), *, size=1, tile_offset=(0, 0)):
+    def __init__(
+        self, shape="circle", render_color=(0, 100, 0), *, size=1, tile_offset=(0, 0)
+    ):
         super().__init__("box", "green")
         self.shape = shape
-        self.render_color = render_color   # RGB for full render
-        self.size = size                   # 1 = normal (1×1), 2 = big (2×2)
-        self.tile_offset = tile_offset     # (ox, oy) ∈ {(0,0),(1,0),(0,1),(1,1)} for 2×2
+        self.render_color = render_color  # RGB for full render
+        self.size = size  # 1 = normal (1×1), 2 = big (2×2)
+        self.tile_offset = tile_offset  # (ox, oy) ∈ {(0,0),(1,0),(0,1),(1,1)} for 2×2
 
     def can_overlap(self):
         # Landmarks are visual only and should not block movement.
@@ -54,8 +59,10 @@ class Landmark(WorldObj):
         where (ox, oy) is this tile’s offset in the 2×2 big shape.
         """
         ox, oy = self.tile_offset
+
         def wrapped(x, y):
             return fn((ox + x) / 2.0, (oy + y) / 2.0)
+
         return wrapped
 
     def render(self, img):
@@ -116,7 +123,7 @@ class Path:
             fragment_pixel_list, fragment_path_width = fragment.to_pixel_list()
             pixel_list.extend(fragment_pixel_list)
             path_widths.extend(fragment_path_width)
-        return pixel_list, path_widths
+        return np.array(pixel_list), np.array(path_widths)
 
 
 class PathFragment:
@@ -156,19 +163,26 @@ shortest_path = Path(
 
 slightly_suboptimal_path = Path(
     [
-        PathFragment((60, 108), PathDirection.RIGHT, 8),
-        PathFragment((68, 108), PathDirection.UP, 8),
-        PathFragment((68, 100), PathDirection.LEFT, 48),
-        PathFragment((20, 100), PathDirection.UP, 73),
+        PathFragment((60, 108), PathDirection.RIGHT, 16),
+        PathFragment((76, 108), PathDirection.UP, 8),
+        PathFragment((76, 100), PathDirection.LEFT, 16),
+        PathFragment((60, 100), PathDirection.UP, 72),
+        PathFragment((60, 28), PathDirection.LEFT, 40),
     ]
 )
 
 moderately_suboptimal_path = Path(
     [
-        PathFragment((60, 108), PathDirection.RIGHT, 24),
-        PathFragment((84, 108), PathDirection.UP, 16),
-        PathFragment((84, 92), PathDirection.LEFT, 64),
-        PathFragment((20, 92), PathDirection.UP, 65),
+        PathFragment((60, 108), PathDirection.RIGHT, 32),
+        PathFragment((92, 108), PathDirection.UP, 16),
+        PathFragment((92, 92), PathDirection.LEFT, 32),
+        PathFragment((60, 92), PathDirection.UP, 16),
+        PathFragment((60, 76), PathDirection.LEFT, 16),
+        PathFragment((44, 76), PathDirection.UP, 16),
+        PathFragment((44, 60), PathDirection.LEFT, 16),
+        PathFragment((28, 60), PathDirection.UP, 16),
+        PathFragment((28, 44), PathDirection.LEFT, 8),
+        PathFragment((20, 44), PathDirection.UP, 16),
     ]
 )
 
@@ -197,9 +211,10 @@ class DirectionlessGrid(Grid):
         self.show_optimal_path = kwargs.pop("show_optimal_path", True)
         self.show_landmarks = kwargs.pop("show_landmarks", True)
         self.pad_width = kwargs.pop("pad_width", None)
-        self.path_widths = kwargs.pop("path_widths", None)
+        self.path_widths = kwargs.pop("path_widths", np.array([]))
         self.path_pixels = kwargs.pop("path_pixels", set())
-        self.path_pixels_array = kwargs.pop("path_pixels_array", [])
+        self.path_pixels_array = kwargs.pop("path_pixels_array", np.array([]))
+        self.render_objects = kwargs.pop("render_objects", True)
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -219,37 +234,8 @@ class DirectionlessGrid(Grid):
         Render a tile and cache the result
         """
 
-        base_tile_hash = (
-            hash(grid.unique_tiles[i, j].tobytes())
-            if hasattr(grid, "unique_tiles")
-            else 0
-        )
-
-        if reveal_all:
-            key: tuple[Any, ...] = (
-                tile_size,
-                obj,
-                base_tile_hash,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
-                reveal_all,
-                agent_dir,
-                tuple(sorted(grid.path_pixels)),
-            )
-        else:
-            key: tuple[Any, ...] = (
-                tile_size,
-                base_tile_hash,
-                grid.tile_global_indices[i, j][0],
-                grid.tile_global_indices[i, j][1],
-                reveal_all,
-                tuple(sorted(grid.path_pixels)),
-            )
-
-        key = obj.encode() + key if obj else key
-
-        if key in cls.tile_cache:
-            return cls.tile_cache[key]
+        tile_x_start = i * tile_size
+        tile_y_start = j * tile_size
 
         if isinstance(obj, Wall):
             if reveal_all:
@@ -268,19 +254,19 @@ class DirectionlessGrid(Grid):
 
         if grid.show_optimal_path or reveal_all:
             # Draw path pixels
-            tile_x_start = i * tile_size
-            tile_y_start = j * tile_size
-
             for px in range(tile_size):
                 for py in range(tile_size):
                     global_px = tile_x_start + px
                     global_py = tile_y_start + py
 
                     if (global_px, global_py) in grid.path_pixels:
-                        path_index = grid.path_pixels_array.index(
-                            (global_px, global_py)
-                        )
-                        x_width, y_width = grid.path_widths[path_index]
+                        # Find the index in the first dimension where the inner array matches [global_px, global_py]
+                        path_index = np.where(
+                            np.all(
+                                grid.path_pixels_array == [global_px, global_py], axis=1
+                            )
+                        )[0]
+                        x_width, y_width = grid.path_widths[path_index][0]
 
                         if reveal_all:
                             img[
@@ -299,7 +285,7 @@ class DirectionlessGrid(Grid):
                             ] = 0  # Black in grayscale
 
         # Draw the grid lines (top and left edges)
-        if grid.show_grid_lines or reveal_all:
+        if (grid.show_grid_lines or reveal_all) and grid.render_objects:
             line_thickness = 0.0625
             if reveal_all:
                 fill_coords(
@@ -312,23 +298,19 @@ class DirectionlessGrid(Grid):
                 fill_coords(img, point_in_rect(0, line_thickness, 0, 1), (100,))
                 fill_coords(img, point_in_rect(0, 1, 0, line_thickness), (100,))
 
-        if obj is not None and obj.type != "wall":
+        if obj is not None and obj.type != "wall" and grid.render_objects:
             obj.render(img)
 
         # Overlay the agent on top
-        if agent_dir is not None and reveal_all:
+        if agent_dir is not None and reveal_all and grid.render_objects:
             tri_fn = point_in_circle(
                 0.5,
                 0.5,
                 0.3,
             )
-
             # Rotate the agent based on its direction
             # tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir)
             fill_coords(img, tri_fn, (255, 0, 0))
-
-        # Cache the rendered tile
-        cls.tile_cache[key] = img
 
         return img
 
@@ -359,20 +341,17 @@ class DirectionlessGrid(Grid):
         else:
             img = np.zeros(shape=(height_px, width_px, 1), dtype=np.uint8)
 
-        # Render the grid
         for j in range(0, self.height):
             for i in range(0, self.width):
                 cell = self.get(i, j)
-
                 agent_here = np.array_equal(agent_pos, (i, j))
                 assert highlight_mask is not None
 
                 if isinstance(cell, Goal) and cell.color == "green" and not reveal_all:
                     cell = None
-                if (
-                    isinstance(cell, Wall)
-                    and not reveal_all
-                    and not self.show_walls_pov
+                if isinstance(cell, Wall) and (
+                    (not reveal_all and not self.show_walls_pov)
+                    or not self.render_objects
                 ):
                     cell = None
                 tile_img = DirectionlessGrid.render_tile(
@@ -431,6 +410,8 @@ class DirectionlessGrid(Grid):
                 local_path_pixels.add((local_px, local_py))
                 local_path_widths.append((x_width, y_width))
                 local_path_pixels_array.append((local_px, local_py))
+        local_path_pixels_array = np.array(local_path_pixels_array)
+        local_path_widths = np.array(local_path_widths)
 
         grid = DirectionlessGrid(
             width,
@@ -447,6 +428,7 @@ class DirectionlessGrid(Grid):
             path_pixels=local_path_pixels,
             path_widths=local_path_widths,
             path_pixels_array=local_path_pixels_array,
+            render_objects=self.render_objects,
         )
 
         for j in range(0, height):
@@ -460,7 +442,6 @@ class DirectionlessGrid(Grid):
                     v = Wall()
 
                 grid.set(i, j, v)
-
         return grid
 
 
@@ -601,8 +582,10 @@ class SaltAndPepper(MiniGridEnv):
         ) = self._gen_unique_tiles()
         self.cell_visitation = np.zeros(shape=(size, size, 4))
         self.cell_visitation_indices_stack = []
-        self.max_visitation_count = 100
+        self.max_visitation_count = 1000000
         self.segments_in_visitation_path = 25
+        self.path = np.array([])
+        self.path_widths = np.array([])
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -614,7 +597,7 @@ class SaltAndPepper(MiniGridEnv):
     @staticmethod
     def _gen_mission():
         return "get to the green goal square"
-    
+
     def put_big_landmark(self, shape, rgb, x, y):
         """
         Place a single logical landmark that spans 2×2 tiles with top-left at (x, y).
@@ -623,8 +606,9 @@ class SaltAndPepper(MiniGridEnv):
         """
         for ox in (0, 1):
             for oy in (0, 1):
-                self.put_obj(Landmark(shape, rgb, size=2, tile_offset=(ox, oy)), x + ox, y + oy)
-
+                self.put_obj(
+                    Landmark(shape, rgb, size=2, tile_offset=(ox, oy)), x + ox, y + oy
+                )
 
     def _gen_unique_tiles(self):
         # Use a fixed random state for generating tiles to ensure consistency
@@ -715,7 +699,7 @@ class SaltAndPepper(MiniGridEnv):
             # Teal crescent (2×2)
             self.put_big_landmark("crescent", (0, 128, 128), 7, 8)
             # Yellow cross (2×2)
-            self.put_big_landmark("cross", (255, 255, 0),9, 5)
+            self.put_big_landmark("cross", (255, 255, 0), 9, 5)
             # Brown rectangle (2×2)
             self.put_big_landmark("rectangle", (165, 42, 42), 2, 1)
             # Dark blue ring (2×2)
@@ -731,12 +715,10 @@ class SaltAndPepper(MiniGridEnv):
             self.path, self.path_widths = moderately_suboptimal_path.to_pixel_list()
         elif self.path_mode == PathMode.MISLEADING_PATH:
             self.path, self.path_widths = misleading_path.to_pixel_list()
-        else:
-            self.path, self.path_widths = [], []
 
         # Update grid with path pixels
-        if self.show_optimal_path and self.path:
-            self.grid.path_pixels = set(self.path)
+        if self.show_optimal_path and not self.path_mode == PathMode.VISITED_CELLS:
+            self.grid.path_pixels = set(map(tuple, self.path.tolist()))
             self.grid.path_pixels_array = self.path
             self.grid.path_widths = self.path_widths
 
@@ -772,12 +754,11 @@ class SaltAndPepper(MiniGridEnv):
         """
         Render an agent's POV observation for visualization
         """
-        grid, vis_mask = self.gen_obs_grid()
+        grid, vis_mask, agent_pos = self.gen_obs_grid()
 
-        # Render the whole grid
         img = grid.render(
             tile_size,
-            agent_pos=(self.agent_view_size // 2, self.agent_view_size - 1),
+            agent_pos=agent_pos,
             agent_dir=3,
             highlight_mask=vis_mask,
         )
@@ -785,66 +766,67 @@ class SaltAndPepper(MiniGridEnv):
         return img
 
     def generate_visitation_path(self):
-        segment_count = np.minimum(
-            self.segments_in_visitation_path, np.sum(self.cell_visitation > 0)
-        )
-        flat = self.cell_visitation.flatten()
-        order = np.lexsort(
-            (np.arange(flat.size), -flat)
-        )  # primary: -flat, secondary: index
-        top_indices = order[:segment_count]
-        # Vectorized construction of per-tile vertical path pixels
+        if self.step_count % 1000 == 0:
+            segment_count = np.minimum(
+                self.segments_in_visitation_path, np.sum(self.cell_visitation > 0)
+            )
+            flat = self.cell_visitation.flatten()
+            order = np.lexsort(
+                (np.arange(flat.size), -flat)
+            )  # primary: -flat, secondary: index
+            top_indices = order[:segment_count]
+            # Vectorized construction of per-tile vertical path pixels
 
-        r, c, action = np.unravel_index(top_indices, self.cell_visitation.shape)
+            r, c, action = np.unravel_index(top_indices, self.cell_visitation.shape)
 
-        left_x_pix = (
-            (r * TILE_PIXELS)[:, None]
-            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
-        ).ravel()
-        left_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            left_x_pix = (
+                (r * TILE_PIXELS)[:, None]
+                + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+            ).ravel()
+            left_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
 
-        up_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
-        up_y_pix = (
-            (c * TILE_PIXELS)[:, None]
-            + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
-        ).ravel()
+            up_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            up_y_pix = (
+                (c * TILE_PIXELS)[:, None]
+                + np.arange(-TILE_PIXELS // 2, TILE_PIXELS // 2 + 1)
+            ).ravel()
 
-        right_x_pix = (
-            (r * TILE_PIXELS)[:, None]
-            + np.arange(TILE_PIXELS + 1)
-            + TILE_PIXELS // 2
-            - 1
-        ).ravel()
-        right_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            right_x_pix = (
+                (r * TILE_PIXELS)[:, None]
+                + np.arange(TILE_PIXELS + 1)
+                + TILE_PIXELS // 2
+                - 1
+            ).ravel()
+            right_y_pix = (c * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
 
-        down_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
-        down_y_pix = (
-            (c * TILE_PIXELS)[:, None]
-            + np.arange(TILE_PIXELS + 1)
-            + TILE_PIXELS // 2
-            - 1
-        ).ravel()
+            down_x_pix = (r * TILE_PIXELS).repeat(TILE_PIXELS + 1) + TILE_PIXELS // 2
+            down_y_pix = (
+                (c * TILE_PIXELS)[:, None]
+                + np.arange(TILE_PIXELS + 1)
+                + TILE_PIXELS // 2
+                - 1
+            ).ravel()
 
-        action = action.repeat(TILE_PIXELS + 1)
+            action = action.repeat(TILE_PIXELS + 1)
 
-        x_pix = np.choose(
-            action,
-            [left_x_pix, up_x_pix, right_x_pix, down_x_pix],
-        )
-        y_pix = np.choose(action, [left_y_pix, up_y_pix, right_y_pix, down_y_pix])
+            x_pix = np.choose(
+                action,
+                [left_x_pix, up_x_pix, right_x_pix, down_x_pix],
+            )
+            y_pix = np.choose(action, [left_y_pix, up_y_pix, right_y_pix, down_y_pix])
 
-        coords = np.column_stack((x_pix, y_pix)).tolist()
+            self.path = np.column_stack((x_pix, y_pix))
 
-        self.path = list(map(tuple, coords))
-        self.path_widths = np.where(
-            np.logical_or(action[:, None] == 1, action[:, None] == 3),
-            np.tile([1, 0], (len(self.path), 1)),
-            np.tile([0, 1], (len(self.path), 1)),
-        )
+            path_list = list(map(tuple, self.path.tolist()))
+            self.path_widths = np.where(
+                np.logical_or(action[:, None] == 1, action[:, None] == 3),
+                np.tile([1, 0], (len(self.path), 1)),
+                np.tile([0, 1], (len(self.path), 1)),
+            )
 
-        self.grid.path_pixels = set(self.path)
-        self.grid.path_pixels_array = self.path
-        self.grid.path_widths = self.path_widths
+            self.grid.path_pixels = set(path_list)
+            self.grid.path_pixels_array = self.path
+            self.grid.path_widths = self.path_widths
 
     def gen_obs_grid(self, agent_view_size=None):
         """
@@ -875,27 +857,20 @@ class SaltAndPepper(MiniGridEnv):
         else:
             vis_mask = np.ones(shape=(grid.width, grid.height), dtype=bool)
 
-        # Make it so the agent sees what it's carrying
-        # We do this by placing the carried object at the agent's position
-        # in the agent's partially observable view
         agent_pos = grid.width // 2, grid.height // 2
-        if self.carrying:
-            grid.set(*agent_pos, self.carrying)
-        else:
-            grid.set(*agent_pos, None)
 
-        return grid, vis_mask
+        return grid, vis_mask, agent_pos
 
     def gen_obs(self):
         """
         Generate the agent's view (partially observable, low-resolution encoding)
         """
-        grid, vis_mask = self.gen_obs_grid()
+        grid, vis_mask, agent_pos = self.gen_obs_grid()
 
         # Encode the partially observable view into a numpy array
         image = grid.render(
             TILE_PIXELS,
-            self.agent_pos,
+            agent_pos,
             self.agent_dir,
             highlight_mask=None,
             reveal_all=False,
@@ -920,7 +895,7 @@ class SaltAndPepper(MiniGridEnv):
         Render a non-paratial observation for visualization
         """
         # Compute which cells are visible to the agent
-        _, vis_mask = self.gen_obs_grid()
+        _, vis_mask, _ = self.gen_obs_grid()
 
         # Compute the world coordinates of the bottom-left corner
         # of the agent's view area
@@ -982,27 +957,32 @@ class SaltAndPepper(MiniGridEnv):
             self.actions.backward: (0, 1),
         }
 
-        if action.item() in action_deltas:
-            dx, dy = action_deltas[action.item()]
-            fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
-            fwd_cell = self.grid.get(*fwd_pos)
-            if fwd_cell is None or fwd_cell.can_overlap():
-                self.update_visitation_count(
-                    self.agent_pos,
-                    action.item(),
-                )
-                self.agent_pos = tuple(fwd_pos)
+        try:
+            if action.item() in action_deltas:
+                dx, dy = action_deltas[action.item()]
+                fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
+                fwd_cell = self.grid.get(*fwd_pos)
+                if fwd_cell is None or fwd_cell.can_overlap():
+                    self.update_visitation_count(
+                        self.agent_pos,
+                        action.item(),
+                    )
+                    self.agent_pos = tuple(fwd_pos)
 
-            if fwd_cell is not None and fwd_cell.type == "goal":
-                terminated = True
-                reward = self._reward()
+                if fwd_cell is not None and fwd_cell.type == "goal":
+                    terminated = True
+                    reward = self._reward()
 
-        # Done action (not used by default)
-        elif action == self.actions.done:
-            pass
+            # Done action (not used by default)
+            elif action == self.actions.done:
+                pass
 
-        else:
-            raise ValueError(f"Unknown action: {action}")
+            else:
+                raise ValueError(f"Unknown action: {action}")
+        except:
+            import pdb
+
+            pdb.set_trace()
 
         if self.step_count >= self.max_steps:
             truncated = True
@@ -1011,5 +991,8 @@ class SaltAndPepper(MiniGridEnv):
             self.render()
 
         obs = self.gen_obs()
+        # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
+        # plt.savefig("step.png")
+        # plt.close()
 
         return obs, reward, terminated, truncated, {}
