@@ -61,7 +61,7 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job):
     
     return job_seconds // task_seconds
 
-def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None):
+def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None, parquet_folder=None):
     script = f"""#!/bin/bash
 #SBATCH --job-name=auto_slurm
 #SBATCH --output=auto_slurm_%j.out
@@ -104,11 +104,12 @@ uv sync --offline
 
         
         run_folder_param = f"run_folder={shlex.quote(run_folder)} " if run_folder else ""
+        parquet_folder_param = f"parquet_folder={shlex.quote(parquet_folder)} " if parquet_folder else ""
         if(wandb_api_key == ""):
             print("Warning : launching without wandb tracking. Either the prgram does not have it or it has it and you have not specified the api key.")
-            script += f"\nuv run python {script_name}.py {run_folder_param}{script_params}"
+            script += f"\nuv run python {script_name}.py {run_folder_param}{parquet_folder_param}{script_params}"
         else:
-            script += f"\nuv run python {script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{script_params}"
+            script += f"\nuv run python {script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}"
 
     script += "\necho Done!"
 
@@ -248,6 +249,7 @@ def main():
     parser.add_argument('--dry-run', action='store_true')
     parser.add_argument('--wandb-api-key', type=str, default="")
     parser.add_argument('--run-folder', type=str, default=None)
+    parser.add_argument('--parquet-folder', type=str, default=None)
     parser.add_argument('--agent-name', type=str)
 
     args = parser.parse_args()
@@ -263,7 +265,7 @@ def main():
     script_name = args.agent_name
     for one_job_task_confs in task_confs_per_job:
         print(f"Generating script for job {num_jobs+1}...")
-        script = generate_script(task_confs=one_job_task_confs, cluster_conf=cluster_conf, max_job_time=args.max_job_time, wandb_api_key=args.wandb_api_key, script_name=script_name, run_folder=args.run_folder)
+        script = generate_script(task_confs=one_job_task_confs, cluster_conf=cluster_conf, max_job_time=args.max_job_time, wandb_api_key=args.wandb_api_key, script_name=script_name, run_folder=args.run_folder, parquet_folder=args.parquet_folder)
         print(script)
         print("--------------------------------")
         if not args.dry_run:
