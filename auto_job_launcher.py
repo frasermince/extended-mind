@@ -89,7 +89,7 @@ uv sync --offline
     for a_task_conf in task_confs:
         script_params = ""
         for key, value in a_task_conf.items():
-            if key == "exp_name" or key == "wandb_api_key" or key == "run_folder":
+            if key == "exp_name" or key == "wandb_api_key" or key == "run_folder" or key == "parquet_folder":
                 continue
             
             if isinstance(value, bool):
