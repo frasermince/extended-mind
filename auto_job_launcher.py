@@ -107,9 +107,9 @@ uv sync --offline
         parquet_folder_param = f"parquet_folder={shlex.quote(parquet_folder)} " if parquet_folder else ""
         if(wandb_api_key == ""):
             print("Warning : launching without wandb tracking. Either the prgram does not have it or it has it and you have not specified the api key.")
-            script += f"\nuv run python {script_name}.py {run_folder_param}{parquet_folder_param}{script_params}"
+            script += f"\nuv run python src/{script_name}.py {run_folder_param}{parquet_folder_param}{script_params}"
         else:
-            script += f"\nuv run python {script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}"
+            script += f"\nuv run python src/{script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}"
 
     script += "\necho Done!"
 
