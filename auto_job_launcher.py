@@ -41,11 +41,10 @@ def dict_permutations(input_dict):
 def submit_bash_script(bash_script_str):
     fd = os.open("auto_slurm.sh", os.O_WRONLY | os.O_CREAT)
     os.write(fd, bash_script_str.encode())
-    exit()
-    # os.system("sbatch auto_slurm.sh")
-    # os.close(fd)
-    # os.remove("auto_slurm.sh")
-    # sleep(2)
+    os.system("sbatch auto_slurm.sh")
+    os.close(fd)
+    os.remove("auto_slurm.sh")
+    sleep(2)
 
 def to_seconds(val):
     t = dateutil_parser.parse(val)
