@@ -453,7 +453,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
         
-@hydra.main(config_path=".", config_name="linear_qlearning_config.yaml", version_base=None)
+@hydra.main(config_path="../", config_name="linear_qlearning_config.yaml", version_base=None)
 def main(cfg):
     start_time = time.time()
     print("Hydra loaded config:")

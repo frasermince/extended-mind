@@ -41,10 +41,11 @@ def dict_permutations(input_dict):
 def submit_bash_script(bash_script_str):
     fd = os.open("auto_slurm.sh", os.O_WRONLY | os.O_CREAT)
     os.write(fd, bash_script_str.encode())
-    os.system("sbatch auto_slurm.sh")
-    os.close(fd)
-    os.remove("auto_slurm.sh")
-    sleep(2)
+    exit()
+    # os.system("sbatch auto_slurm.sh")
+    # os.close(fd)
+    # os.remove("auto_slurm.sh")
+    # sleep(2)
 
 def to_seconds(val):
     t = dateutil_parser.parse(val)
@@ -89,7 +90,7 @@ uv sync --offline
     for a_task_conf in task_confs:
         script_params = ""
         for key, value in a_task_conf.items():
-            if key == "exp_name" or key == "wandb_api_key" or key == "run_folder" or key == "parquet_folder":
+            if key == "exp_name" or key == "wandb_api_key" or key == "run_folder" or key == "parquet_folder" or key == "agent_name":
                 continue
             
             if isinstance(value, bool):
