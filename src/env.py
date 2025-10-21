@@ -199,6 +199,65 @@ misleading_path = Path(
     ]
 )
 
+# Hardcoded random path derived from averaged agent actions (precomputed)
+random_path = Path([
+        # Start at (60,108)
+        PathFragment((60, 108), PathDirection.UP, 8),    
+        PathFragment((60, 100), PathDirection.RIGHT, 8), 
+        PathFragment((68, 100), PathDirection.DOWN, 8),  
+        PathFragment((68, 108), PathDirection.RIGHT, 8), 
+        PathFragment((76, 108), PathDirection.RIGHT, 8), 
+        PathFragment((84, 108), PathDirection.UP, 8),    
+        PathFragment((84, 100), PathDirection.UP, 8),   
+        PathFragment((84, 92), PathDirection.RIGHT, 8),  
+        PathFragment((92, 92), PathDirection.RIGHT, 8),  
+        PathFragment((100, 92), PathDirection.DOWN, 8),  
+        PathFragment((100, 100), PathDirection.DOWN, 8), 
+        PathFragment((100, 108), PathDirection.LEFT, 8),  
+        PathFragment((92, 108), PathDirection.LEFT, 8),   
+        PathFragment((84, 108), PathDirection.LEFT, 8),   
+        PathFragment((76, 108), PathDirection.UP, 8),     
+        PathFragment((76, 100), PathDirection.UP, 8),     
+        PathFragment((76, 92), PathDirection.LEFT, 8),    
+        PathFragment((68, 92), PathDirection.UP, 8),      
+        PathFragment((68, 84), PathDirection.UP, 8),    
+        PathFragment((68, 76), PathDirection.RIGHT, 8),    
+        PathFragment((76, 76), PathDirection.RIGHT, 8),    
+        PathFragment((84, 76), PathDirection.DOWN, 8),       
+        PathFragment((84, 84), PathDirection.LEFT, 8),    
+        PathFragment((76, 84), PathDirection.LEFT, 8),    
+        PathFragment((68, 84), PathDirection.LEFT, 8),    
+        PathFragment((60, 84), PathDirection.LEFT, 8),    
+        PathFragment((52, 84), PathDirection.UP, 8),    
+        PathFragment((52, 76), PathDirection.UP, 8),    
+        PathFragment((52, 68), PathDirection.LEFT, 8), 
+        PathFragment((44, 68), PathDirection.UP, 8),
+        PathFragment((44, 60), PathDirection.RIGHT, 8),
+        PathFragment((52, 60), PathDirection.DOWN, 8),
+        PathFragment((52, 68), PathDirection.RIGHT, 8),
+        PathFragment((60, 68), PathDirection.UP, 8),
+        PathFragment((60, 60), PathDirection.UP, 8),
+        PathFragment((60, 52), PathDirection.RIGHT, 8),
+        PathFragment((68, 52), PathDirection.DOWN, 8),
+        PathFragment((68, 60), PathDirection.RIGHT, 8),
+        PathFragment((76, 60), PathDirection.UP, 8),
+        PathFragment((76, 52), PathDirection.LEFT, 8),
+        PathFragment((68, 52), PathDirection.UP, 8),
+        PathFragment((68, 44), PathDirection.LEFT, 8),
+        PathFragment((60, 44), PathDirection.UP, 8),
+        PathFragment((60, 36), PathDirection.RIGHT, 8),
+        PathFragment((68, 36), PathDirection.UP, 8),
+        PathFragment((68, 28), PathDirection.LEFT, 8),
+        PathFragment((60, 28), PathDirection.UP, 8),
+        PathFragment((60, 20), PathDirection.RIGHT, 8),
+        PathFragment((68, 20), PathDirection.RIGHT, 8),
+        PathFragment((76, 20), PathDirection.RIGHT, 8),
+        PathFragment((84, 20), PathDirection.UP, 8),
+    ])
+# left = subtract x - 8
+# right = add x + 8
+# down = add y + 8
+# up = subtract y - 8
 
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
@@ -459,6 +518,7 @@ class PathMode(StrEnum):
     SUBOPTIMAL_PATH = "SUBOPTIMAL_PATH"
     MISLEADING_PATH = "MISLEADING_PATH"
     VISITED_CELLS = "VISITED_CELLS"
+    RANDOM_PATH = "RANDOM_PATH"
 
 
 class SaltAndPepper(MiniGridEnv):
@@ -715,6 +775,8 @@ class SaltAndPepper(MiniGridEnv):
             self.path, self.path_widths = moderately_suboptimal_path.to_pixel_list()
         elif self.path_mode == PathMode.MISLEADING_PATH:
             self.path, self.path_widths = misleading_path.to_pixel_list()
+        elif self.path_mode == PathMode.RANDOM_PATH:
+            self.path, self.path_widths = random_path.to_pixel_list()
 
         # Update grid with path pixels
         if self.show_optimal_path and not self.path_mode == PathMode.VISITED_CELLS:
