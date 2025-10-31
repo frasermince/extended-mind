@@ -641,10 +641,14 @@ def main(cfg):
     learning_rate_str = str(cfg.training.learning_rate)
     network_depth = len(cfg.training.dense_features)
     network_width = cfg.training.dense_features[0] if cfg.training.dense_features else 0
+    if cfg.show_landmarks:
+        path_mode_str = "LANDMARKS"
+    else:
+        path_mode_str = cfg.path_mode
 
     runs_dir = os.path.join(
         cfg.run_folder,
-        f"path_mode_{cfg.path_mode}",
+        f"path_mode_{path_mode_str}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
@@ -652,7 +656,7 @@ def main(cfg):
     )
     parquet_dir = os.path.join(
         cfg.parquet_folder,
-        f"path_mode_{cfg.path_mode}",
+        f"path_mode_{path_mode_str}",
         f"learning_rate_{learning_rate_str}",
         f"network_depth_{network_depth}",
         f"network_width_{network_width}",
