@@ -180,7 +180,11 @@ def construct_run_path(tc, run_folder=None):
         run_folder = "/home/esraa1/scratch/extended-mind/runs"
     agent_name = tc['agent_name']
     if(agent_name == "main_dqn"):
-        path_mode = tc['path_mode']
+        # If show_landmarks is true, set path_mode to LANDMARKS (matching main_dqn.py logic)
+        if tc.get('show_landmarks', False):
+            path_mode = "LANDMARKS"
+        else:
+            path_mode = tc['path_mode']
         learning_rate = tc['training.learning_rate']
         dense_features = tc['training.dense_features']
         seed = tc['seed']
