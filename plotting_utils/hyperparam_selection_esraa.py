@@ -124,7 +124,8 @@ def read_config_seed_file(config_path):
 def compute_total_reward_across_seeds(config_results_path, num_seeds):
     total_rewards = []
     print(f"Computing total reward across seeds for {config_results_path}")
-    for seed_folder in os.listdir(config_results_path):
+    seed_folders = os.listdir(config_results_path)[:num_seeds]
+    for seed_folder in seed_folders:
         seed_results_path = os.path.join(config_results_path, seed_folder, "metrics.pkl")
         reward_array = read_config_seed_file(seed_results_path)
         print(f"  {seed_folder}: {len(reward_array)} reward values")
@@ -151,10 +152,10 @@ def group_task_configs_by_hyperparam(task_configs, hyperparam):
 
 
 def main():
-    hyperparam_sweeps_config_path = "/home/esraa1/scratch/extended-mind/run_configs/lr_sweep_linear_qlearning_config.yaml"
+    hyperparam_sweeps_config_path = "/home/esraa1/code/extended-mind/run_configs/lr_sweep_linear_qlearning_config.yaml"
     default_config_path = "linear_qlearning_config.yaml"
-    run_folder = "/home/esraa1/scratch/extended-mind/runs"
-    json_results_path = "/home/esraa1/scratch/extended-mind/hyperparam_selection_results.json"
+    run_folder = "/home/esraa1/scratch/extended-mind/linear_runs_oct13/runs"
+    json_results_path = "/home/esraa1/code/extended-mind/hyperparam_selection_results.json"
     num_seeds = 30
     hyperparam_sweeps_config = load_config(hyperparam_sweeps_config_path)
     default_config = load_config(default_config_path)
@@ -184,33 +185,46 @@ def main():
             path_conf_to_total_reward[hyperparam_path] = (mean, std_error, data_points)
     
 
-    # select best hyperparam config per view edge dim in non path
     nonpath_best_view_edge_dim_conf_to_total_reward = {}
     for view_edge_dim, task_configs in agent_pixel_view_edge_nonpath.items():
-        best_conf = max(task_configs, key=lambda x: nonpath_conf_to_total_reward[task_conf_to_path(x, "/home/esraa1/scratch/extended-mind/runs", "linear_qlearning")][0])
+        best_conf = max(task_configs, key=lambda x: nonpath_conf_to_total_reward[task_conf_to_path(x, run_folder, "linear_qlearning")][0])
         best_path = task_conf_to_path(best_conf, run_folder, "linear_qlearning")
-        nonpath_best_view_edge_dim_conf_to_total_reward[view_edge_dim] = nonpath_conf_to_total_reward[best_path]
+        mean, std_error, data_points = nonpath_conf_to_total_reward[best_path]
+        
+        nonpath_best_view_edge_dim_conf_to_total_reward[view_edge_dim] = {
+            "mean": mean,
+            "std_error": std_error,
+            "data_points": data_points,
+            "config_path": best_path
+        }
     
-    # select best hyperparam config per view edge dim in path
     path_best_view_edge_dim_conf_to_total_reward = {}
     for view_edge_dim, task_configs in agent_pixel_view_edge_path.items():
-        best_conf = max(task_configs, key=lambda x: path_conf_to_total_reward[task_conf_to_path(x, "/home/esraa1/scratch/extended-mind/runs", "linear_qlearning")][0])
+        best_conf = max(task_configs, key=lambda x: path_conf_to_total_reward[task_conf_to_path(x, run_folder, "linear_qlearning")][0])
         best_path = task_conf_to_path(best_conf, run_folder, "linear_qlearning")
-        path_best_view_edge_dim_conf_to_total_reward[view_edge_dim] = path_conf_to_total_reward[best_path]
+        mean, std_error, data_points = path_conf_to_total_reward[best_path]
+        
+        path_best_view_edge_dim_conf_to_total_reward[view_edge_dim] = {
+            "mean": mean,
+            "std_error": std_error,
+            "data_points": data_points,
+            "config_path": best_path
+        }
 
 
     # pretty print the results
     print("Non path best view edge dim to total reward (mean ± std_error):")
-    for view_edge_dim, (total_reward, std_error, data_points) in nonpath_best_view_edge_dim_conf_to_total_reward.items():
-        print(f"{view_edge_dim}: {total_reward:.1f} ± {std_error:.1f}")
-        print(f"  Data points: {data_points}")
+    for view_edge_dim, result in nonpath_best_view_edge_dim_conf_to_total_reward.items():
+        print(f"{view_edge_dim}: {result['mean']:.1f} ± {result['std_error']:.1f}")
+        print(f"  Data points: {result['data_points']}")
+        print(f"  Config path: {result['config_path']}")
     
     print("\nPath best view edge dim to total reward (mean ± std_error):")
-    for view_edge_dim, (total_reward, std_error, data_points) in path_best_view_edge_dim_conf_to_total_reward.items():
-        print(f"{view_edge_dim}: {total_reward:.1f} ± {std_error:.1f}")
-        print(f"  Data points: {data_points}")
+    for view_edge_dim, result in path_best_view_edge_dim_conf_to_total_reward.items():
+        print(f"{view_edge_dim}: {result['mean']:.1f} ± {result['std_error']:.1f}")
+        print(f"  Data points: {result['data_points']}")
+        print(f"  Config path: {result['config_path']}")
 
-    # write results to a json file
     results = {
         "nonpath_best_view_edge_dim_conf_to_total_reward": nonpath_best_view_edge_dim_conf_to_total_reward,
         "path_best_view_edge_dim_conf_to_total_reward": path_best_view_edge_dim_conf_to_total_reward

@@ -1,6 +1,29 @@
 import json
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.ticker import MultipleLocator
+import matplotlib.colors as mcolors
+
+
+def get_colorblind_friendly_colors(n):
+    """Generate n colorblind-friendly colors. Maximum 10 colors supported."""
+    if n > 10:
+        raise ValueError(f"Cannot generate more than 10 colorblind-friendly colors. Requested: {n}")
+    
+    colors = [
+        '#E69F00',  # orange
+        '#56B4E9',  # sky blue
+        '#009E73',  # bluish green
+        '#0072B2',  # blue
+        '#D55E00',  # vermillion
+        '#CC79A7',  # reddish purple
+        '#000000',  # black
+        '#999999',  # gray
+        '#E5E5E5',  # light gray
+        '#8B4513',  # brown 
+    ]
+    
+    return colors[:n]
 
 def plot_hyperparam_comparison(json_file_path, output_path):
     with open(json_file_path, 'r') as f:
@@ -10,57 +33,61 @@ def plot_hyperparam_comparison(json_file_path, output_path):
     path_results = results["path_best_view_edge_dim_conf_to_total_reward"]
     
     view_edge_dims = sorted([int(k) for k in nonpath_results.keys()])
+    agent_capacities = [dim * dim for dim in view_edge_dims]
     
-    nonpath_rewards = [nonpath_results[str(dim)][0] for dim in view_edge_dims]  # Mean values
-    nonpath_errors = [nonpath_results[str(dim)][1] for dim in view_edge_dims]  # Standard errors
-    nonpath_data_points = [nonpath_results[str(dim)][2] for dim in view_edge_dims]  # Individual data points
-    path_rewards = [path_results[str(dim)][0] for dim in view_edge_dims]  # Mean values
-    path_errors = [path_results[str(dim)][1] for dim in view_edge_dims]  # Standard errors
-    path_data_points = [path_results[str(dim)][2] for dim in view_edge_dims]  # Individual data points
+    nonpath_rewards = [nonpath_results[str(dim)]["mean"] for dim in view_edge_dims]  # Mean values
+    nonpath_errors = [nonpath_results[str(dim)]["std_error"] for dim in view_edge_dims]  # Standard errors
+    nonpath_data_points = [nonpath_results[str(dim)]["data_points"] for dim in view_edge_dims]  # Individual data points
+    path_rewards = [path_results[str(dim)]["mean"] for dim in view_edge_dims]  # Mean values
+    path_errors = [path_results[str(dim)]["std_error"] for dim in view_edge_dims]  # Standard errors
+    path_data_points = [path_results[str(dim)]["data_points"] for dim in view_edge_dims]  # Individual data points
     
     fig, ax = plt.subplots(figsize=(12, 8))
     bar_width = 0.35
     x_pos = np.arange(len(view_edge_dims))
+    
+    colors = get_colorblind_friendly_colors(5)
+    nonpath_color = colors[4]  
+    path_color = colors[3]    
+    
+    # Draw bars without error bars (lowest layer)
     bars1 = ax.bar(x_pos - bar_width/2, nonpath_rewards, bar_width, 
-                   yerr=nonpath_errors, capsize=5,
-                   label='Non-Path', color='#E69F00', alpha=0.8)  # Orange
+                   label='No path', color=nonpath_color, zorder=3)
     bars2 = ax.bar(x_pos + bar_width/2, path_rewards, bar_width, 
-                   yerr=path_errors, capsize=5,
-                   label='Path', color='#56B4E9', alpha=0.8)  # Blue
+                   label='Optimal path', color=path_color, zorder=3)
     
-    ax.set_xlabel('Agent Pixel View Edge Dimension', fontsize=12)
+    ax.set_xlabel('Agent Capacity', fontsize=12)
     ax.set_ylabel('Total Reward', fontsize=12)
-    ax.set_title('Hyperparameter Comparison: Path vs Non-Path Results\nby Agent Pixel View Edge Dimension', 
-                 fontsize=14, fontweight='bold')
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(view_edge_dims)
-    ax.legend()
+    ax.set_xticklabels(agent_capacities)
+        
+    ax.yaxis.set_major_locator(MultipleLocator(1000))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     
-    def add_value_labels(bars, errors):
-        for bar, error in zip(bars, errors):
-            height = bar.get_height()
-            ax.annotate(f'{height:.1f}±{error:.1f}',
-                       xy=(bar.get_x() + bar.get_width() / 2, height + error),
-                       xytext=(0, 3),
-                       textcoords="offset points",
-                       ha='center', va='bottom',
-                       fontsize=8)
+    ax.legend(frameon=False)
     
-    add_value_labels(bars1, nonpath_errors)
-    add_value_labels(bars2, path_errors)
+    dot_colors = get_colorblind_friendly_colors(5)
+    nonpath_dot_color = dot_colors[4]  # vermillion
+    path_dot_color = dot_colors[3]    # blue
     
-    # Add individual data points
     for i, (nonpath_points, path_points) in enumerate(zip(nonpath_data_points, path_data_points)):
         x_nonpath = [x_pos[i] - bar_width/2] * len(nonpath_points)
-        ax.scatter(x_nonpath, nonpath_points, color='#D55E00', alpha=0.6, s=30, zorder=3)  # Dark orange
+        ax.scatter(x_nonpath, nonpath_points, color=nonpath_dot_color, s=30, zorder=4, 
+                   edgecolors='white', linewidths=0.3)
         
         x_path = [x_pos[i] + bar_width/2] * len(path_points)
-        ax.scatter(x_path, path_points, color='#0072B2', alpha=0.6, s=30, zorder=3)  # Dark blue
+        ax.scatter(x_path, path_points, color=path_dot_color, s=30, zorder=4,
+                   edgecolors='white', linewidths=0.3)
+    
+    ax.errorbar(x_pos - bar_width/2, nonpath_rewards, yerr=nonpath_errors, 
+                fmt='none', capsize=5, color='black', zorder=5, linewidth=2)
+    ax.errorbar(x_pos + bar_width/2, path_rewards, yerr=path_errors, 
+                fmt='none', capsize=5, color='black', zorder=5, linewidth=2)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Plot saved to: {output_path}")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print("\nSummary Statistics:")
     print("=" * 50)
     for i, dim in enumerate(view_edge_dims):
@@ -78,6 +105,6 @@ def plot_hyperparam_comparison(json_file_path, output_path):
         print()
 
 if __name__ == "__main__":
-    output_path = '/home/esraa1/scratch/extended-mind/hyperparam_comparison_plot.png'
-    json_file_path = "/home/esraa1/scratch/extended-mind/hyperparam_selection_results.json"
+    output_path = '/home/esraa1/code/extended-mind/hyperparam_comparison_plot.png'
+    json_file_path = "/home/esraa1/code/extended-mind/hyperparam_selection_results.json"
     plot_hyperparam_comparison(json_file_path, output_path)
