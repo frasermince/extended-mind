@@ -87,8 +87,8 @@ def load_results(json_path: str) -> pd.DataFrame:
     max_learning_rate_per_capacity = {}
     for row in data:
         run_key = row.get("run_key", "")
-        lr_str = _parse_learning_rate_from_run_key(run_key)
-        optimal_path = _parse_optimal_path_from_run_key(run_key)
+        lr_str = "0.0005"
+        optimal_path = False
         # Optional new metrics
         auc_val = row.get("average_reward_area_under_curve")
         try:
@@ -731,7 +731,6 @@ def _plot_best_auc_reward_curves_side_by_side(
       - "average_reward_area_under_curve"
       - "average_reward_curve"
     """
-
     for path_label, df in paths:
         if df.empty:
             return
@@ -1323,23 +1322,43 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
+    import pdb
+
+    pdb.set_trace()
     # plt.show()
     plt.close(fig)
 
 
 if __name__ == "__main__":
     outdir = "plots"
-    json_path = "misleading_path_results.json"
+    # json_path = "misleading_path_results.json"
     json_path_previous = "path_and_no_path_results.json"
-    df = load_results(json_path)
-    old_df = load_results(json_path_previous)
-    paths = [
-        ("No Path", old_df[old_df["optimal_path"] == False]),
-        ("Misleading Path", df),
-        ("Optimal Path", old_df[old_df["optimal_path"] == True]),
+    json_path_grey = "landmarks_grey_results.json"
+    json_path_black = "landmarks_black_results.json"
+    # df = load_results(json_path)
+    grey_df = load_results(json_path_grey)
+    black_df = load_results(json_path_black)
+    path_and_no_path_df = load_results(json_path_previous)
+    path_and_no_path_df = path_and_no_path_df[
+        path_and_no_path_df["learning_rate_str"] == "0.0005"
     ]
+    path_and_no_path_df = path_and_no_path_df[path_and_no_path_df["depth"] == 2]
+    path_and_no_path_df = path_and_no_path_df[path_and_no_path_df["width"] == 32]
+    paths = [
+        ("No Path", path_and_no_path_df[path_and_no_path_df["optimal_path"] == False]),
+        ("Black Landmarks", black_df),
+        ("Grey Landmarks", grey_df),
+        (
+            "Optimal Path",
+            path_and_no_path_df[path_and_no_path_df["optimal_path"] == True],
+        ),
+    ]
+    import pdb
+
+    pdb.set_trace()
     parser = argparse.ArgumentParser()
-    shared_colors = _build_pair_color_map(df)
+    shared_colors = _build_pair_color_map(path_and_no_path_df)
+    print("start plotting")
     _plot_best_auc_reward_curves_side_by_side(
         paths=paths,
         title_base="Avg Reward Curve at Best AUC LR",

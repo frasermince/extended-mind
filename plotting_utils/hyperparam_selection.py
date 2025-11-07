@@ -260,7 +260,7 @@ if __name__ == "__main__":
 
     use_parquet = True
     if use_parquet:
-        outputs_root = "/Users/frasermince/Programming/hidden_llava/parquet_test_reordered/path_mode_MISLEADING_PATH"
+        outputs_root = "/Users/frasermince/Programming/hidden_llava/parquet_metrics/path_mode_LANDMARKS/learning_rate_0.0005"
         # Aggregate entire directory in one DuckDB call
         try:
             duck_df = aggregate_runs_duckdb(
@@ -336,7 +336,7 @@ if __name__ == "__main__":
         # Write consolidated results to repo-root JSON
         out_json = os.path.abspath(
             os.path.join(
-                os.path.dirname(__file__), os.pardir, "hyperparam_results.json"
+                os.path.dirname(__file__), os.pardir, "landmarks_black_results.json"
             )
         )
         with open(out_json, "w", encoding="utf-8") as json_file:
