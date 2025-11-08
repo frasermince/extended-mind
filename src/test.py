@@ -45,6 +45,7 @@ def test_config():
     cfg.show_landmarks = False
     cfg.path_mode = "NONE"
     cfg.run_folder = ""
+    cfg.parquet_folder = "parquet_metrics"
     return cfg
 
 
