@@ -68,7 +68,7 @@ class Landmark(WorldObj):
     def render(self, img):
         # grayscale POV vs full RGB
         if img.shape[-1] == 1:
-            color = (160,)  # mid-gray so it stands out against black path
+            color = (0,)  # mid-gray so it stands out against black path
         else:
             color = self.render_color
 
@@ -200,37 +200,38 @@ misleading_path = Path(
 )
 
 # Hardcoded random path derived from averaged agent actions (precomputed)
-random_path = Path([
+random_path = Path(
+    [
         # Start at (60,108)
-        PathFragment((60, 108), PathDirection.UP, 8),    
-        PathFragment((60, 100), PathDirection.RIGHT, 8), 
-        PathFragment((68, 100), PathDirection.DOWN, 8),  
-        PathFragment((68, 108), PathDirection.RIGHT, 8), 
-        PathFragment((76, 108), PathDirection.RIGHT, 8), 
-        PathFragment((84, 108), PathDirection.UP, 8),    
-        PathFragment((84, 100), PathDirection.UP, 8),   
-        PathFragment((84, 92), PathDirection.RIGHT, 8),  
-        PathFragment((92, 92), PathDirection.RIGHT, 8),  
-        PathFragment((100, 92), PathDirection.DOWN, 8),  
-        PathFragment((100, 100), PathDirection.DOWN, 8), 
-        PathFragment((100, 108), PathDirection.LEFT, 8),  
-        PathFragment((92, 108), PathDirection.LEFT, 8),   
-        PathFragment((84, 108), PathDirection.LEFT, 8),   
-        PathFragment((76, 108), PathDirection.UP, 8),     
-        PathFragment((76, 100), PathDirection.UP, 8),     
-        PathFragment((76, 92), PathDirection.LEFT, 8),    
-        PathFragment((68, 92), PathDirection.UP, 8),      
-        PathFragment((68, 84), PathDirection.UP, 8),    
-        PathFragment((68, 76), PathDirection.RIGHT, 8),    
-        PathFragment((76, 76), PathDirection.RIGHT, 8),    
-        PathFragment((84, 76), PathDirection.DOWN, 8),       
-        PathFragment((84, 84), PathDirection.LEFT, 8),    
-        PathFragment((76, 84), PathDirection.LEFT, 8),    
-        PathFragment((68, 84), PathDirection.LEFT, 8),    
-        PathFragment((60, 84), PathDirection.LEFT, 8),    
-        PathFragment((52, 84), PathDirection.UP, 8),    
-        PathFragment((52, 76), PathDirection.UP, 8),    
-        PathFragment((52, 68), PathDirection.LEFT, 8), 
+        PathFragment((60, 108), PathDirection.UP, 8),
+        PathFragment((60, 100), PathDirection.RIGHT, 8),
+        PathFragment((68, 100), PathDirection.DOWN, 8),
+        PathFragment((68, 108), PathDirection.RIGHT, 8),
+        PathFragment((76, 108), PathDirection.RIGHT, 8),
+        PathFragment((84, 108), PathDirection.UP, 8),
+        PathFragment((84, 100), PathDirection.UP, 8),
+        PathFragment((84, 92), PathDirection.RIGHT, 8),
+        PathFragment((92, 92), PathDirection.RIGHT, 8),
+        PathFragment((100, 92), PathDirection.DOWN, 8),
+        PathFragment((100, 100), PathDirection.DOWN, 8),
+        PathFragment((100, 108), PathDirection.LEFT, 8),
+        PathFragment((92, 108), PathDirection.LEFT, 8),
+        PathFragment((84, 108), PathDirection.LEFT, 8),
+        PathFragment((76, 108), PathDirection.UP, 8),
+        PathFragment((76, 100), PathDirection.UP, 8),
+        PathFragment((76, 92), PathDirection.LEFT, 8),
+        PathFragment((68, 92), PathDirection.UP, 8),
+        PathFragment((68, 84), PathDirection.UP, 8),
+        PathFragment((68, 76), PathDirection.RIGHT, 8),
+        PathFragment((76, 76), PathDirection.RIGHT, 8),
+        PathFragment((84, 76), PathDirection.DOWN, 8),
+        PathFragment((84, 84), PathDirection.LEFT, 8),
+        PathFragment((76, 84), PathDirection.LEFT, 8),
+        PathFragment((68, 84), PathDirection.LEFT, 8),
+        PathFragment((60, 84), PathDirection.LEFT, 8),
+        PathFragment((52, 84), PathDirection.UP, 8),
+        PathFragment((52, 76), PathDirection.UP, 8),
+        PathFragment((52, 68), PathDirection.LEFT, 8),
         PathFragment((44, 68), PathDirection.UP, 8),
         PathFragment((44, 60), PathDirection.RIGHT, 8),
         PathFragment((52, 60), PathDirection.DOWN, 8),
@@ -253,11 +254,13 @@ random_path = Path([
         PathFragment((68, 20), PathDirection.RIGHT, 8),
         PathFragment((76, 20), PathDirection.RIGHT, 8),
         PathFragment((84, 20), PathDirection.UP, 8),
-    ])
+    ]
+)
 # left = subtract x - 8
 # right = add x + 8
 # down = add y + 8
 # up = subtract y - 8
+
 
 class DirectionlessGrid(Grid):
     def __init__(self, *args, **kwargs):
@@ -756,6 +759,7 @@ class SaltAndPepper(MiniGridEnv):
             self.put_big_landmark("square", (128, 0, 128), 10, 2)
             # Pink diamond (2×2)
             self.put_big_landmark("diamond", (255, 105, 180), 3, 11)
+            # self.put_big_landmark("diamond", (255, 105, 180), 5, 11)
             # Teal crescent (2×2)
             self.put_big_landmark("crescent", (0, 128, 128), 7, 8)
             # Yellow cross (2×2)
@@ -763,6 +767,7 @@ class SaltAndPepper(MiniGridEnv):
             # Brown rectangle (2×2)
             self.put_big_landmark("rectangle", (165, 42, 42), 2, 1)
             # Dark blue ring (2×2)
+            # self.put_big_landmark("ring", (0, 0, 139), 2, 6)
             self.put_big_landmark("ring", (0, 0, 139), 2, 8)
 
         self.mission = "get to the green goal square"
