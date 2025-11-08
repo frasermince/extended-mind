@@ -1035,6 +1035,9 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         "#EC8380",  # red
         "#29AB87",  # green
         "#89BEDF",  # blue
+        "#F5B041",  # orange
+        "#9B59B6",  # purple
+        "#FF6B6B",  # coral
     ]
     for path_label, df in paths:
         if df.empty:
@@ -1119,7 +1122,7 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
 
         x = np.arange(len(labels))
         bar_width = 0.38
-        group_gap = 0.4  # extra horizontal gap between label groups
+        group_gap = 1.8  # extra horizontal gap between label groups
         x = np.arange(len(labels)) * (1.0 + group_gap)
         # fig_width = max(8, 0.7 * len(labels) * (1.0 + group_gap))
 
@@ -1329,40 +1332,77 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
 
 if __name__ == "__main__":
     outdir = "plots"
-    json_path = "misleading_path_results.json"
-    json_path_previous = "path_and_no_path_results.json"
-    df = load_results(json_path)
-    old_df = load_results(json_path_previous)
-    paths = [
-        ("No Path", old_df[old_df["optimal_path"] == False]),
-        ("Misleading Path", df),
-        ("Optimal Path", old_df[old_df["optimal_path"] == True]),
-    ]
+    misleading_path = "misleading_path_results.json"
+    path_and_no_path = "path_and_no_path_results.json"
+    visited_cells = "visited_paths.json"
+    suboptimal_path = "suboptimal_results.json"
+    random_path = "random_path_results.json"
+    landmarks = "landmarks_path_results.json"
+    landmarks_grey = "landmarks_grey_results.json"
+    landmarks_black = "landmarks_black_results.json"
+    landmarks_extra = "landmarks_extra_results.json"
+    misleading_path_df = load_results(misleading_path)
+    path_and_no_path_df = load_results(path_and_no_path)
+    visited_cells_df = load_results(visited_cells)
+    suboptimal_path_df = load_results(suboptimal_path)
+    random_path_df = load_results(random_path)
+    # landmarks_df = load_results(landmarks)
+    landmarks_grey_df = load_results(landmarks_grey)
+    landmarks_black_df = load_results(landmarks_black)
+    landmarks_extra_df = load_results(landmarks_extra)
+
     parser = argparse.ArgumentParser()
-    shared_colors = _build_pair_color_map(df)
-    _plot_best_auc_reward_curves_side_by_side(
-        paths=paths,
-        title_base="Avg Reward Curve at Best AUC LR",
-        ylabel="Average Reward",
-        shared_colors=shared_colors,
-        output_path=os.path.join(
-            outdir,
-            "average_reward.pdf",
-        ),
-    )
+    shared_colors = _build_pair_color_map(path_and_no_path_df)
+    just_misleading_path = [("Misleading Path", misleading_path_df)]
+    just_visited_cells = [("Non Stationary Path", visited_cells_df)]
+    just_suboptimal_path = [("Suboptimal Path", suboptimal_path_df)]
+    just_random_path = [("Random Path", random_path_df)]
+    # just_landmarks = [("Landmarks", landmarks_df)]
+    for paths in [
+        # just_misleading_path,
+        # just_visited_cells,
+        # just_suboptimal_path,
+        # just_random_path,
+        # just_landmarks,
+    ]:
+        _plot_best_auc_reward_curves_side_by_side(
+            paths=paths,
+            title_base="Avg Reward Curve at Best AUC LR",
+            ylabel="Average Reward",
+            shared_colors=shared_colors,
+            output_path=os.path.join(
+                outdir,
+                f"average_reward_{paths[0][0]}.pdf",
+            ),
+        )
 
-    _plot_side_by_side_path_vs_pathless(
-        paths=paths,
-        metric="average_reward_area_under_curve",
-        title="Avg Reward AUC across Learning Rates",
-        ylabel="Total Reward",
-        shared_colors=shared_colors,
-        output_path=os.path.join(
-            outdir,
-            "sweeps.pdf",
-        ),
-    )
+        _plot_side_by_side_path_vs_pathless(
+            paths=paths,
+            metric="average_reward_area_under_curve",
+            title="Avg Reward AUC across Learning Rates",
+            ylabel="Total Reward",
+            shared_colors=shared_colors,
+            output_path=os.path.join(
+                outdir,
+                f"sweeps_{paths[0][0]}.pdf",
+            ),
+        )
 
+    paths = [
+        # ("No Path", path_and_no_path_df[path_and_no_path_df["optimal_path"] == False]),
+        # ("Random Path", random_path_df),
+        # ("Landmarks", landmarks_df),
+        # ("Non Stationary Path", visited_cells_df),
+        # ("Misleading Path", misleading_path_df),
+        # ("Suboptimal Path", suboptimal_path_df),
+        # (
+        #     "Optimal Path",
+        #     path_and_no_path_df[path_and_no_path_df["optimal_path"] == True],
+        # ),
+        ("Landmarks Grey", landmarks_grey_df),
+        ("Landmarks Black", landmarks_black_df),
+        ("Landmarks Extra", landmarks_extra_df),
+    ]
     _plot_grouped_bars_path_vs_pathless_by_capacity(
         paths=paths,
         metric="average_reward_area_under_curve",
