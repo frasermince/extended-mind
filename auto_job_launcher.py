@@ -13,6 +13,7 @@ import argparse
 import itertools
 from collections.abc import Iterable
 import shlex
+import copy
 
 
 def read_config(conf_file_path):
@@ -62,6 +63,9 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job):
     return job_seconds // task_seconds
 
 def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None, parquet_folder=None):
+    # Get the directory where this Python script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
     script = f"""#!/bin/bash
 #SBATCH --job-name=auto_slurm
 #SBATCH --output=auto_slurm_%j.out
@@ -78,7 +82,7 @@ def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, scrip
     
     env_prep = f"""
 echo Start!
-git clone /home/esraa1/scratch/extended-mind $SLURM_TMPDIR/extended-mind
+git clone {script_dir} $SLURM_TMPDIR/extended-mind
 cd $SLURM_TMPDIR/extended-mind
 uv sync --offline
 
@@ -175,9 +179,9 @@ def check_if_file_exists(file_path):
     return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
-def construct_run_path(tc, run_folder=None):
-    if run_folder is None:
-        run_folder = "/home/esraa1/scratch/extended-mind/runs"
+def construct_run_path(tc_original, run_folder):
+    
+    tc = copy.deepcopy(tc_original)
     agent_name = tc['agent_name']
     if(agent_name == "main_dqn"):
         # If show_landmarks is true, set path_mode to LANDMARKS (matching main_dqn.py logic)
@@ -242,6 +246,10 @@ def construct_run_path(tc, run_folder=None):
 
 
 def main():
+    '''
+    Example command:
+    uv run python auto_job_launcher.py --max-job-time="02:59:00" --max-task-time="00:08:00" --cluster-conf="./clusters/narval_gpu.yaml" --hyperparam-sweep-conf="run_configs/visited_sweep.yaml" --hyperparam-default-conf="src/config.yaml" --num-seeds=30  --wandb-api-key="6314198eb6e8a2350001f6bce002acb709b5bcbe" --agent-name="main_dqn" --run-folder="/home/esraa1/scratch/extended_mind_results/runs" --parquet-folder="/home/esraa1/scratch/extended_mind_results/parquet_runs"
+    '''
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--max-job-time', type=str)
