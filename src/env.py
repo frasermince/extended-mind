@@ -834,34 +834,26 @@ class SaltAndPepper(MiniGridEnv):
         # Determine the set of pixels from which to sample.
         (x, y) = agent_pos
         if action == 0:  # left
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(
-                -TILE_PIXELS // 2, 1
-            )
+            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-TILE_PIXELS, 1)
             y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
         elif action == 1:  # up
             x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(
-                -TILE_PIXELS // 2, 1
-            )
+            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-TILE_PIXELS, 1)
         elif action == 2:  # right
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(
-                1, TILE_PIXELS // 2
-            )
+            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(1, TILE_PIXELS)
             y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
         elif action == 3:  # down
             x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(
-                1, TILE_PIXELS // 2
-            )
+            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(1, TILE_PIXELS)
         else:
             print("error")
 
         path_pixels = np.array(np.meshgrid(x_pix, y_pix)).T.reshape(-1, 2)
 
         # Sample and add the occupied path pixels.
-        inclusion_subset_size = 4  # update this.
+        pixels_added_per_visit = 16  # update this.
         path_idxs = self.np_random.choice(
-            len(path_pixels), inclusion_subset_size, replace=False
+            len(path_pixels), pixels_added_per_visit, replace=False
         )
 
         path_list = [
