@@ -748,7 +748,7 @@ class SaltAndPepper(MiniGridEnv):
             self.put_big_landmark("square", (128, 0, 128), 10, 2)
             # Pink diamond (2×2)
             self.put_big_landmark("diamond", (255, 105, 180), 3, 11)
-            # self.put_big_landmark("diamond", (255, 105, 180), 5, 11)
+            self.put_big_landmark("diamond", (255, 105, 180), 5, 11)
             # Teal crescent (2×2)
             self.put_big_landmark("crescent", (0, 128, 128), 7, 8)
             # Yellow cross (2×2)
@@ -756,7 +756,7 @@ class SaltAndPepper(MiniGridEnv):
             # Brown rectangle (2×2)
             self.put_big_landmark("rectangle", (165, 42, 42), 2, 1)
             # Dark blue ring (2×2)
-            # self.put_big_landmark("ring", (0, 0, 139), 2, 6)
+            self.put_big_landmark("ring", (0, 0, 139), 2, 6)
             self.put_big_landmark("ring", (0, 0, 139), 2, 8)
 
         self.mission = "get to the green goal square"
