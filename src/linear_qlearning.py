@@ -9,8 +9,15 @@ import pickle
 import hydra
 import os
 import time
+import uuid
+import json
 from tensorboardX import SummaryWriter
 
+
+import pyarrow as pa  
+import pyarrow.parquet as pq 
+
+from main_dqn import _get_metric_series, _get_last_metric_value
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
@@ -173,6 +180,53 @@ def log_metric(writer, metrics_dict, name, value, step, step_type="global_step")
     metrics_dict["data"].append(
         {"metric": name, "step": step, "value": float(value), "step_type": step_type}
     )
+
+
+def write_parquet_metrics(
+    cfg, metrics_dict, metrics_parquet_dir
+):
+    """Write all log_metric entries as a time-series Parquet part file.
+
+    Each element in metrics_dict["data"] becomes one row with run metadata
+    attached for efficient filtering across runs.
+    """
+    data = metrics_dict.get("data", [])
+    if not data:
+        print("No metrics to write to metrics Parquet dataset.")
+        return
+
+    rows = []
+    step_size = float(cfg.training.step_size)
+    agent_pixel_view_edge_dim = int(cfg.training.agent_pixel_view_edge_dim)
+    optimal_path_available = bool(cfg.path_mode != "NONE")
+    
+    for item in data:
+        rows.append(
+            {
+                # minimal run-level metadata for grouping
+                "step_size": step_size,
+                "agent_pixel_view_edge_dim": agent_pixel_view_edge_dim,
+                "seed": int(cfg.seed),
+                "optimal_path_available": optimal_path_available,
+                "path_mode": str(cfg.path_mode),
+                # metric payload
+                "metric": str(item.get("metric")),
+                "step": int(item.get("step", 0)),
+                "value": float(item.get("value", 0.0)),
+                # keep numeric values in `value` and reserve strings for `json_value`
+                "json_value": None,
+                "step_type": str(item.get("step_type", "global_step")),
+            }
+        )
+
+    table = pa.Table.from_pylist(rows)
+
+    # Write to metrics subdirectory under the hyperparameter-partitioned base dir
+    metrics_dir = os.path.join(metrics_parquet_dir, "metrics")
+    os.makedirs(metrics_dir, exist_ok=True)
+    part_path = os.path.join(metrics_dir, f"part-{uuid.uuid4().hex}.parquet")
+    pq.write_table(table, part_path, compression="zstd", compression_level=3)
+    print(f"Metrics Parquet saved to {part_path}")
 
 class FlaxQLearningAgent:
     def __init__(self, env_obs_dims : tuple, num_actions: int, discount: float, step_size: float, seed: int, start_epsilon: float, end_epsilon: float,
@@ -373,7 +427,7 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     
 
 
-def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, runs_dir, cfg):
+def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, runs_dir, parquet_dir, cfg):
 
     metrics_dict = {}
     rng = jax.random.PRNGKey(agent.seed)
@@ -452,6 +506,11 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     with open(metrics_path, "wb") as f:
         pickle.dump(metrics_dict, f)
     print(f"Metrics saved to {metrics_path}")
+    
+    # Save metrics to parquet
+    write_parquet_metrics(
+        cfg, metrics_dict, parquet_dir
+    )
         
 @hydra.main(config_path="../", config_name="linear_qlearning_config.yaml", version_base=None)
 def main(cfg):
@@ -470,8 +529,18 @@ def main(cfg):
         f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
         f"seed_{cfg.seed}",
     )
+    parquet_dir = os.path.join(
+        cfg.parquet_folder,
+        f"agent_name_{cfg.agent_name}",
+        f"path_mode_{cfg.path_mode}",
+        f"step_size_{step_size_str}",
+        f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
+        f"seed_{cfg.seed}",
+    )
     print(f"Runs directory: {runs_dir}")
+    print(f"Parquet directory: {parquet_dir}")
     os.makedirs(runs_dir, exist_ok=True)
+    os.makedirs(parquet_dir, exist_ok=True)
 
     # Set up tensorboard writer
     writer = SummaryWriter(f"{runs_dir}")
@@ -525,7 +594,7 @@ def main(cfg):
     else:
         raise ValueError(f"Invalid q network type: {cfg.training.q_network_type}")
 
-    train(agent, env, total_timesteps=cfg.training.total_timesteps, writer=writer, runs_dir=runs_dir, cfg=cfg)
+    train(agent, env, total_timesteps=cfg.training.total_timesteps, writer=writer, runs_dir=runs_dir, parquet_dir=parquet_dir, cfg=cfg)
     
     env.close()
     writer.close()

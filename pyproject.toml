@@ -27,6 +27,7 @@ dependencies = [
     "pytest>=8.4.1",
     "pyarrow>=21.0.0",
     "duckdb>=1.4.1",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]

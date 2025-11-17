@@ -1,5 +1,6 @@
 agent_name: "linear_qlearning"
 run_folder: "/home/esraa1/scratch/extended-mind/runs"
+parquet_folder: "/home/esraa1/scratch/extended-mind/parquet"
 
 seed: 1
 agent_view_size: 3

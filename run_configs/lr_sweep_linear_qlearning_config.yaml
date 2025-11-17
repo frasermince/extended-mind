@@ -4,10 +4,14 @@ training.step_size:
   - 2e-3
   - 4e-3
   - 8e-3
+  - 2e-2
+  - 4e-2
+
 
 path_mode:
   - SHORTEST_PATH
   - NONE
+  - VISITED_CELLS
 
 training.agent_pixel_view_edge_dim:
   - 24
