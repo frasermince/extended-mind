@@ -31,6 +31,10 @@ agent_view_size: 3
 
 path_mode: "NONE" # NONE, SHORTEST_PATH, SLIGHTLY_SUBOPTIMAL_PATH, SUBOPTIMAL_PATH, MISLEADING_PATH, VISITED_CELLS, RANDOM_PATH
 
+nonstationary_path_decay_pixels: 720
+nonstationary_path_decay_chance: .25
+nonstationary_path_inclusion_pixels: 16
+
 show_landmarks: false
 
 render_options:
