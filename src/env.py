@@ -555,6 +555,9 @@ class SaltAndPepper(MiniGridEnv):
         self,
         size=9,
         max_steps: int | None = None,
+        nonstationary_path_decay_pixels: int = 720,
+        nonstationary_path_inclusion_pixels: int = 16,
+        nonstationary_path_decay_chance: float = 0.25,
         **kwargs,
     ):
         self.seed = kwargs.pop("seed", None)
@@ -563,6 +566,9 @@ class SaltAndPepper(MiniGridEnv):
         self.goal_position = None
         self.path_episode_threshold = 4000
         self.num_episodes = 0
+        self.nonstationary_path_decay_pixels = nonstationary_path_decay_pixels
+        self.nonstationary_path_inclusion_pixels = nonstationary_path_inclusion_pixels
+        self.nonstationary_path_decay_chance = nonstationary_path_decay_chance
 
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
@@ -821,10 +827,10 @@ class SaltAndPepper(MiniGridEnv):
 
     def update_path(self, agent_pos, action, step_count):
         # Randomly eject pixels from the path set.
-        ejection_subset_size = 720  # update and pass as arg
+        ejection_subset_size = self.nonstationary_path_decay_pixels
         decay_chance = self.np_random.random()
         # print("ejection_subset_size", ejection_subset_size)
-        if decay_chance < 0.25:
+        if decay_chance < self.nonstationary_path_decay_chance:
             ejection_indices = self.np_random.choice(
                 len(self.possible_pixels), ejection_subset_size, replace=False
             )
@@ -851,7 +857,7 @@ class SaltAndPepper(MiniGridEnv):
         path_pixels = np.array(np.meshgrid(x_pix, y_pix)).T.reshape(-1, 2)
 
         # Sample and add the occupied path pixels.
-        pixels_added_per_visit = 16  # update this.
+        pixels_added_per_visit = self.nonstationary_path_inclusion_pixels
         path_idxs = self.np_random.choice(
             len(path_pixels), pixels_added_per_visit, replace=False
         )
