@@ -28,6 +28,7 @@ import hydra
 import matplotlib.pyplot as plt
 import pickle
 import uuid
+import pandas as pd
 
 # Optional dependency: pyarrow for Parquet output
 try:
@@ -200,7 +201,13 @@ def write_parquet_result(cfg, run_name, metrics_dict, parquet_dir):
 
 
 def write_parquet_metrics(
-    cfg, run_name, metrics_dict, metrics_parquet_dir, model_params_json, global_step
+    cfg,
+    run_name,
+    metrics_dict,
+    metrics_parquet_dir,
+    model_params_json,
+    global_step,
+    path_list,
 ):
     """Write all log_metric entries as a time-series Parquet part file.
 
@@ -254,6 +261,21 @@ def write_parquet_metrics(
             "step_type": "global_step",
         }
     )
+    for path in path_list:
+        rows.append(
+            {
+                "learning_rate": float(cfg.training.learning_rate),
+                "network_depth": int(network_depth),
+                "network_width": int(network_width),
+                "seed": int(cfg.seed),
+                "optimal_path_available": optimal_path_available,
+                "metric": "path",
+                "step": int(global_step),
+                "value": None,
+                "json_value": json.dumps(path),
+                "step_type": "global_step",
+            }
+        )
 
     table = pa.Table.from_pylist(rows)
 
@@ -265,21 +287,56 @@ def write_parquet_metrics(
     print(f"Metrics Parquet saved to {part_path}")
 
 
-def eval_env(cfg, envs):
+def eval_env(cfg, envs, path_list, model_params, action_mode, actions_list, seed):
+    dict_path_list = [json.loads(p) if isinstance(p, str) else p for p in path_list]
     print("****Evaluating****")
     obs, _ = envs.reset(seed=cfg.seed)
     terminations = np.array([False])
     truncations = np.array([False])
-    seed = cfg.seed
 
-    hardcoded_actions = cfg.hardcoded_actions
+    hardcoded_actions = cfg.eval_params.hardcoded_actions
     action_index = 0
-    for global_step in tqdm(range(cfg.training.total_timesteps)):
+    dense_features_count = len(model_params["params"]) - 1
+    dense_features_size = model_params["params"]["Dense_1"]["kernel"].shape[0]
+    dense_features = [dense_features_size for _ in range(dense_features_count)]
+
+    q_network = Network(
+        feature_dims=dense_features,
+        action_dim=envs.action_space.n,
+    )
+
+    q_state = TrainState.create(
+        apply_fn=q_network.apply,
+        params=model_params,
+        target_params=model_params,
+        tx=optax.adam(learning_rate=cfg.training.learning_rate),
+    )
+    q_network.apply = jax.jit(q_network.apply)
+
+    if action_mode == "RECORDED_ACTIONS":
+        timesteps = len(actions_list)
+    elif path_list:
+        timesteps = len(dict_path_list)
+    else:
+        timesteps = cfg.training.total_timesteps
+    for global_step in tqdm(range(timesteps)):
+        if action_mode == "RECORDED_ACTIONS":
+            envs.unwrapped.path = set(tuple(x) for x in dict_path_list[global_step])
         # ALGO LOGIC: put action logic here
 
-        actions = jnp.array([hardcoded_actions[action_index]])
-        action_index += 1
-        action_index %= len(hardcoded_actions)
+        if action_mode == "HARDCODED_ACTIONS":
+            actions = jnp.array([hardcoded_actions[action_index]])
+            action_index += 1
+            action_index %= len(hardcoded_actions)
+        elif action_mode == "FINAL_POLICY":
+            q_values = q_network.apply(
+                q_state.params,
+                jnp.expand_dims(jnp.array(obs["image"]), 0),
+            )
+            actions = q_values.argmax(axis=-1)
+            actions = jax.device_get(actions)
+        elif action_mode == "RECORDED_ACTIONS":
+            actions = jnp.array(actions_list[global_step])
 
         # TRY NOT TO MODIFY: execute the game and log data.
         if terminations or truncations:
@@ -290,8 +347,8 @@ def eval_env(cfg, envs):
             terminations = np.array([False])
             truncations = np.array([False])
         else:
-
-            next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+            actions = jnp.array(actions_list[global_step])
+        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
         # next_obs = np.expand_dims(obs["image"], axis=0)
         terminations = np.expand_dims(terminations, axis=0)
         truncations = np.expand_dims(truncations, axis=0)
@@ -399,6 +456,7 @@ def train_env(
         q_state = q_state.apply_gradients(grads=grads)
         return loss_value, q_pred, q_state
 
+    path_list = []
     for global_step in tqdm(range(cfg.training.total_timesteps)):
         # ALGO LOGIC: put action logic here
         epsilon = linear_schedule(
@@ -431,6 +489,9 @@ def train_env(
         else:
 
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+
+        path_list.append(list(envs.unwrapped.path))
+        log_metric(writer, metrics_dict, "action", actions[0].item(), global_step)
 
         log_metric(writer, metrics_dict, "reward_per_timestep", rewards, global_step)
         log_metric(writer, metrics_dict, "is_done", np.any(terminations), global_step)
@@ -623,7 +684,7 @@ def train_env(
     print(f"Metrics saved to {metrics_path}")
 
     write_parquet_metrics(
-        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step
+        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step, path_list
     )
 
 
@@ -731,8 +792,43 @@ def main(cfg):
     ), "only discrete action space is supported"
 
     print(f"train: {cfg.train}, eval: {cfg.eval}")
+    path_list = []
+    model_params = []
+
+    def py_tree_to_jax(tree):
+        if isinstance(tree, dict):
+            return {k: py_tree_to_jax(v) for k, v in tree.items()}
+        elif isinstance(tree, list):
+            return jnp.array(tree)
+        else:
+            return tree
+
     if cfg.eval:
-        eval_env(cfg, envs)
+        with open(cfg.eval_params.parquet_path, "rb") as f:
+
+            metrics_df = pq.read_table(f).to_pandas()
+            path_list = metrics_df[metrics_df["metric"] == "path"][
+                "json_value"
+            ].tolist()
+            model_params = json.loads(
+                metrics_df[metrics_df["metric"] == "model_params_json"][
+                    "json_value"
+                ].values[0]
+            )
+            model_params = py_tree_to_jax(model_params)
+            actions_list = metrics_df[metrics_df["metric"] == "action"][
+                "value"
+            ].tolist()
+            seed = int(metrics_df["seed"].iloc[0])
+        eval_env(
+            cfg,
+            envs,
+            path_list,
+            model_params,
+            cfg.eval_params.action_mode,
+            actions_list,
+            seed,
+        )
     else:
         train_env(
             cfg,

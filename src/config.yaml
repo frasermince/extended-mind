@@ -75,6 +75,11 @@ training:
   train_frequency: 1
   dense_features: [8, 8]
 
+eval_params:
+  action_mode: "RECORDED_ACTIONS" # "FINAL_POLICY", "RECORDED_ACTIONS", "HARDCODED"
+  parquet_path: "./parquet_metrics/path_mode_NONE/learning_rate_0.0001/network_depth_3/network_width_8/seed_1/metrics/part-fb5807190ba341048b8a9c4f99ca10e2.parquet"
+  hardcoded_actions: null
+
 eval: false
 train: true
 
