@@ -846,11 +846,11 @@ class SaltAndPepper(MiniGridEnv):
             x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
             y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-TILE_PIXELS, 1)
         elif action == 2:  # right
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(1, TILE_PIXELS)
+            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(0, TILE_PIXELS + 1)
             y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
         elif action == 3:  # down
             x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(1, TILE_PIXELS)
+            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(0, TILE_PIXELS + 1)
         else:
             print("error")
 
