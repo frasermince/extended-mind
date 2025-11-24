@@ -343,23 +343,14 @@ def eval_env(cfg, envs, path_list, model_params, action_mode, actions_list, seed
             # key, new_key = jax.random.split(key)
             # seed = int(jax.random.randint(new_key, (), 0, 2**30))
             # rng = np.random.default_rng(np.asarray(new_key))
-            next_obs, _ = envs.reset()
+            obs, _ = envs.reset()
             terminations = np.array([False])
             truncations = np.array([False])
         else:
             actions = jnp.array(actions_list[global_step])
-        next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-        # next_obs = np.expand_dims(obs["image"], axis=0)
+        obs, rewards, terminations, truncations, infos = envs.step(actions)
         terminations = np.expand_dims(terminations, axis=0)
         truncations = np.expand_dims(truncations, axis=0)
-
-        # plt.imshow(obs["image"], cmap="gray", vmin=0, vmax=255)
-        # plt.savefig("previous_obs_image.png")
-        # plt.close()
-
-        # plt.imshow(next_obs["image"], cmap="gray", vmin=0, vmax=255)
-        # plt.savefig("next_obs_image.png")
-        # plt.close()
 
 
 def train_env(
