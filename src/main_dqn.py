@@ -261,7 +261,7 @@ def write_parquet_metrics(
             "step_type": "global_step",
         }
     )
-    for path in path_list:
+    for step_idx, path in enumerate(path_list):
         rows.append(
             {
                 "learning_rate": float(cfg.training.learning_rate),
@@ -270,7 +270,7 @@ def write_parquet_metrics(
                 "seed": int(cfg.seed),
                 "optimal_path_available": optimal_path_available,
                 "metric": "path",
-                "step": int(global_step),
+                "step": int(step_idx + 1),
                 "value": None,
                 "json_value": json.dumps(path),
                 "step_type": "global_step",
