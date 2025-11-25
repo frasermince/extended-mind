@@ -42,10 +42,11 @@ def dict_permutations(input_dict):
 def submit_bash_script(bash_script_str):
     fd = os.open("auto_slurm.sh", os.O_WRONLY | os.O_CREAT)
     os.write(fd, bash_script_str.encode())
-    os.system("sbatch auto_slurm.sh")
-    os.close(fd)
-    os.remove("auto_slurm.sh")
-    sleep(2)
+    exit()
+    # os.system("sbatch auto_slurm.sh")
+    # os.close(fd)
+    # os.remove("auto_slurm.sh")
+    # sleep(2)
 
 def to_seconds(val):
     t = dateutil_parser.parse(val)
@@ -92,6 +93,7 @@ uv sync --offline
 
     for a_task_conf in task_confs:
         script_params = ""
+        agent_name = a_task_conf.get('agent_name', script_name)
         for key, value in a_task_conf.items():
             if key == "exp_name" or key == "wandb_api_key" or key == "run_folder" or key == "parquet_folder" or key == "agent_name":
                 continue
@@ -107,7 +109,8 @@ uv sync --offline
                 script_params += f"{key}={shell_val} "
 
         
-        run_folder_param = f"run_folder={shlex.quote(run_folder)} " if run_folder else ""
+        # For linear_qlearning, don't pass run_folder parameter
+        run_folder_param = f"run_folder={shlex.quote(run_folder)} " if (run_folder and agent_name != "linear_qlearning") else ""
         parquet_folder_param = f"parquet_folder={shlex.quote(parquet_folder)} " if parquet_folder else ""
         if(wandb_api_key == ""):
             print("Warning : launching without wandb tracking. Either the prgram does not have it or it has it and you have not specified the api key.")
@@ -120,7 +123,7 @@ uv sync --offline
     return script
 
 
-def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time, run_folder):
+def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time, run_folder, parquet_folder):
         
     sweep_dict = {}
 
@@ -151,7 +154,7 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     one_job_task_confs = []
     for tc in task_confs:
 
-        run_path = construct_run_path(tc, run_folder)
+        run_path = construct_run_path(tc, run_folder, parquet_folder)
         print(f">>>>> Run path: {run_path}")
         if check_if_file_exists(run_path):
             
@@ -179,7 +182,7 @@ def check_if_file_exists(file_path):
     return os.path.exists(metrics_path) or os.path.exists(metrics_optimal_path)
 
 
-def construct_run_path(tc_original, run_folder):
+def construct_run_path(tc_original, run_folder, parquet_folder):
     
     tc = copy.deepcopy(tc_original)
     agent_name = tc['agent_name']
@@ -229,14 +232,30 @@ def construct_run_path(tc_original, run_folder):
             step_size_str = f"{step_size:.6f}".rstrip('0').rstrip('.')
         
         
-        run_path = os.path.join(
-        run_folder,
-        f"agent_name_{agent_name}",
-        f"path_mode_{path_mode}",
-        f"step_size_{step_size_str}",
-        f"agent_pixel_view_edge_dim_{agent_pixel_view_edge_dim}",
-        f"seed_{seed}",
-    )
+        # Build base path components - use parquet_folder instead of run_folder for linear_qlearning
+        path_components = [
+            parquet_folder,
+            f"agent_name_{agent_name}",
+            f"path_mode_{path_mode}",
+            f"step_size_{step_size_str}",
+            f"agent_pixel_view_edge_dim_{agent_pixel_view_edge_dim}",
+        ]
+        
+        # Only include nonstationary_path fields when path_mode is VISITED_CELLS
+        if path_mode == "VISITED_CELLS":
+            nonstationary_path_decay_pixels = tc['nonstationary_path_decay_pixels']
+            nonstationary_path_decay_chance = tc['nonstationary_path_decay_chance']
+            nonstationary_path_inclusion_pixels = tc['nonstationary_path_inclusion_pixels']
+
+            decay_chance_str = f"{float(nonstationary_path_decay_chance):.2f}".rstrip('0').rstrip('.')
+            path_components.extend([
+                f"nonstationary_path_decay_pixels_{nonstationary_path_decay_pixels}",
+                f"nonstationary_path_decay_chance_{decay_chance_str}",
+                f"nonstationary_path_inclusion_pixels_{nonstationary_path_inclusion_pixels}",
+            ])
+        
+        path_components.append(f"seed_{seed}")
+        run_path = os.path.join(*path_components)
     
     else:
         raise ValueError(f"Agent name {agent_name} not supported")
@@ -271,7 +290,7 @@ def main():
     hyperparam_sweep_conf = read_config(args.hyperparam_sweep_conf)
     hyperparam_default_conf = read_config(args.hyperparam_default_conf)
 
-    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder)
+    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder, args.parquet_folder)
 
     num_jobs = 0
     script_name = args.agent_name

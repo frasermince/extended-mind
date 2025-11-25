@@ -1,11 +1,10 @@
 agent_name: "linear_qlearning"
-run_folder: "/home/esraa1/scratch/extended-mind/runs"
-parquet_folder: "/home/esraa1/scratch/extended-mind/parquet"
+parquet_folder: "./parquet"
 
 seed: 1
 agent_view_size: 3
 max_steps: 1000
-path_mode: "NONE"
+path_mode: "VISITED_CELLS"
 
 render_options:
   show_grid_lines: false
@@ -22,3 +21,19 @@ training:
   exploration_fraction: 0.5
   agent_pixel_view_edge_dim: 20
   q_network_type: "flax"
+
+capture_video: false
+
+eval: false
+train: true
+
+eval_params:
+  action_mode: "RECORDED_ACTIONS"
+  hardcoded_actions: null # todo for now comment out
+  parquet_path: null # this is the path to the parquet file that contains the agent params and action recordings we might want to use in eval
+  
+
+nonstationary_path_decay_pixels: 720
+nonstationary_path_decay_chance: .25
+nonstationary_path_inclusion_pixels: 16
+show_landmarks: false

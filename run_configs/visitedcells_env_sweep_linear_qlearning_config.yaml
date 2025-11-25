@@ -1,0 +1,38 @@
+training.step_size:
+  - 4e-4
+  - 8e-4
+  - 2e-3
+  - 4e-3
+  - 8e-3
+  - 2e-2
+  - 4e-2
+
+
+path_mode:
+  - VISITED_CELLS
+
+training.agent_pixel_view_edge_dim:
+  - 24
+  - 20
+  - 16
+  - 8
+  - 4
+
+nonstationary_path_decay_pixels:
+  - 240
+  - 360
+  - 480
+  - 600
+  - 720
+nonstationary_path_decay_chance:
+  - .05
+  - .10
+  - .15
+  - .20
+  - .25
+nonstationary_path_inclusion_pixels:
+  - 8
+  - 16
+  - 18
+  - 22
+  - 27

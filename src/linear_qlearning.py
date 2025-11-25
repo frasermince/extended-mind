@@ -5,25 +5,35 @@ from flax.training.train_state import TrainState
 import optax
 import gymnasium as gym
 from gymnasium.envs.registration import register
-import pickle
 import hydra
 import os
 import time
 import uuid
 import json
+import numpy as np
 from tensorboardX import SummaryWriter
-
+from tqdm import tqdm
 
 import pyarrow as pa  
 import pyarrow.parquet as pq 
 
 from main_dqn import _get_metric_series, _get_last_metric_value
+from env import PathMode
+from wrappers import PartialAndTotalRecordVideo
 
 register(
     id="MiniGrid-SaltAndPepper-v0-custom",
     entry_point="env:SaltAndPepper",
     kwargs={"size": 15},
 )
+
+def agent_observation_transform(img_obs: jnp.ndarray, agent_pixel_view_edge_dim: int, obs_dims: tuple):
+    start_idx = (obs_dims[0] - agent_pixel_view_edge_dim) // 2
+    end_idx = start_idx + agent_pixel_view_edge_dim
+    img_obs_cropped = img_obs[start_idx:end_idx, start_idx:end_idx, :]
+    flattened_img_obs_cropped = img_obs_cropped.flatten().astype(jnp.float32) / 255.0
+    return flattened_img_obs_cropped
+
 
 class LinearQNetworkNumpy:
     def __init__(self, obs_dim: int, num_actions: int, seed: int = 42):
@@ -132,11 +142,7 @@ class NumpyQLearningAgent:
         return loss
 
     def _agent_observation_transform(self, img_obs: jnp.ndarray):
-        start_idx = (img_obs.shape[0] - self.agent_pixel_view_edge_dim) // 2
-        end_idx = start_idx + self.agent_pixel_view_edge_dim
-        img_obs_cropped = img_obs[start_idx:end_idx, start_idx:end_idx, :]
-        flattened_img_obs_cropped = img_obs_cropped.flatten().astype(jnp.float32) / 255.0 
-        return flattened_img_obs_cropped
+        return agent_observation_transform(img_obs, self.agent_pixel_view_edge_dim, self.obs_dims)
 
 
 class LinearQNetworkFlax(nn.Module):
@@ -181,52 +187,6 @@ def log_metric(writer, metrics_dict, name, value, step, step_type="global_step")
         {"metric": name, "step": step, "value": float(value), "step_type": step_type}
     )
 
-
-def write_parquet_metrics(
-    cfg, metrics_dict, metrics_parquet_dir
-):
-    """Write all log_metric entries as a time-series Parquet part file.
-
-    Each element in metrics_dict["data"] becomes one row with run metadata
-    attached for efficient filtering across runs.
-    """
-    data = metrics_dict.get("data", [])
-    if not data:
-        print("No metrics to write to metrics Parquet dataset.")
-        return
-
-    rows = []
-    step_size = float(cfg.training.step_size)
-    agent_pixel_view_edge_dim = int(cfg.training.agent_pixel_view_edge_dim)
-    optimal_path_available = bool(cfg.path_mode != "NONE")
-    
-    for item in data:
-        rows.append(
-            {
-                # minimal run-level metadata for grouping
-                "step_size": step_size,
-                "agent_pixel_view_edge_dim": agent_pixel_view_edge_dim,
-                "seed": int(cfg.seed),
-                "optimal_path_available": optimal_path_available,
-                "path_mode": str(cfg.path_mode),
-                # metric payload
-                "metric": str(item.get("metric")),
-                "step": int(item.get("step", 0)),
-                "value": float(item.get("value", 0.0)),
-                # keep numeric values in `value` and reserve strings for `json_value`
-                "json_value": None,
-                "step_type": str(item.get("step_type", "global_step")),
-            }
-        )
-
-    table = pa.Table.from_pylist(rows)
-
-    # Write to metrics subdirectory under the hyperparameter-partitioned base dir
-    metrics_dir = os.path.join(metrics_parquet_dir, "metrics")
-    os.makedirs(metrics_dir, exist_ok=True)
-    part_path = os.path.join(metrics_dir, f"part-{uuid.uuid4().hex}.parquet")
-    pq.write_table(table, part_path, compression="zstd", compression_level=3)
-    print(f"Metrics Parquet saved to {part_path}")
 
 class FlaxQLearningAgent:
     def __init__(self, env_obs_dims : tuple, num_actions: int, discount: float, step_size: float, seed: int, start_epsilon: float, end_epsilon: float,
@@ -290,13 +250,97 @@ class FlaxQLearningAgent:
         return loss
 
     def _agent_observation_transform(self, img_obs: jnp.ndarray):
-        start_idx = (img_obs.shape[0] - self.agent_pixel_view_edge_dim) // 2
-        end_idx = start_idx + self.agent_pixel_view_edge_dim
-        img_obs_cropped = img_obs[start_idx:end_idx, start_idx:end_idx, :]
-        flattened_img_obs_cropped = img_obs_cropped.flatten().astype(jnp.float32) / 255.0 
-        return flattened_img_obs_cropped
+        return agent_observation_transform(img_obs, self.agent_pixel_view_edge_dim, self.obs_dims)
 
 
+def write_parquet_metrics(
+    cfg,
+    run_name,
+    metrics_dict,
+    metrics_parquet_dir,
+    model_params_json,
+    global_step,
+    path_list,
+):
+    """Write all log_metric entries as a time-series Parquet part file.
+
+    Each element in metrics_dict["data"] becomes one row with run metadata
+    attached for efficient filtering across runs.
+    """
+    data = metrics_dict.get("data", [])
+    if not data:
+        print("No metrics to write to metrics Parquet dataset.")
+        return
+
+    rows = []
+    step_size = float(cfg.training.step_size)
+    agent_pixel_view_edge_dim = int(cfg.training.agent_pixel_view_edge_dim)
+    optimal_path_available = bool(cfg.path_mode != "NONE")
+    
+    for item in data:
+        rows.append(
+            {
+                # minimal run-level metadata for grouping
+                "step_size": step_size,
+                "agent_pixel_view_edge_dim": agent_pixel_view_edge_dim,
+                "seed": int(cfg.seed),
+                "optimal_path_available": optimal_path_available,
+                "path_mode": str(cfg.path_mode),
+                # metric payload
+                "metric": str(item.get("metric")),
+                "step": int(item.get("step", 0)),
+                "value": float(item.get("value", 0.0)),
+                # keep numeric values in `value` and reserve strings for `json_value`
+                "json_value": None,
+                "step_type": str(item.get("step_type", "global_step")),
+            }
+        )
+    
+    # Add model params if provided
+    if model_params_json:
+        rows.append(
+            {
+                # include run-level metadata for consistent filtering
+                "step_size": step_size,
+                "agent_pixel_view_edge_dim": agent_pixel_view_edge_dim,
+                "seed": int(cfg.seed),
+                "optimal_path_available": optimal_path_available,
+                "path_mode": str(cfg.path_mode),
+                "metric": "model_params_json",
+                "step": int(global_step),
+                # keep numeric column null; store JSON string separately
+                "value": None,
+                "json_value": model_params_json,
+                "step_type": "global_step",
+            }
+        )
+    
+    # Add path_list entries if provided
+    if path_list:
+        for step_idx, path in enumerate(path_list):
+            rows.append(
+                {
+                    "step_size": step_size,
+                    "agent_pixel_view_edge_dim": agent_pixel_view_edge_dim,
+                    "seed": int(cfg.seed),
+                    "optimal_path_available": optimal_path_available,
+                    "path_mode": str(cfg.path_mode),
+                    "metric": "path",
+                    "step": int(step_idx + 1),  # step_idx is 0-indexed, so add 1
+                    "value": None,
+                    "json_value": json.dumps(path),
+                    "step_type": "global_step",
+                }
+            )
+
+    table = pa.Table.from_pylist(rows)
+
+    # Write to metrics subdirectory under the hyperparameter-partitioned base dir
+    metrics_dir = os.path.join(metrics_parquet_dir, "metrics")
+    os.makedirs(metrics_dir, exist_ok=True)
+    part_path = os.path.join(metrics_dir, f"part-{uuid.uuid4().hex}.parquet")
+    pq.write_table(table, part_path, compression="zstd", compression_level=3)
+    print(f"Metrics Parquet saved to {part_path}")
         
 def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     '''
@@ -325,6 +369,10 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
         seed=cfg.seed,
         show_optimal_path=cfg.render_options.show_optimal_path,
         path_mode=cfg.path_mode,
+        show_landmarks=cfg.show_landmarks,
+        nonstationary_path_decay_pixels=cfg.nonstationary_path_decay_pixels,
+        nonstationary_path_inclusion_pixels=cfg.nonstationary_path_inclusion_pixels,
+        nonstationary_path_decay_chance=cfg.nonstationary_path_decay_chance,
     )
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.Autoreset(env)
@@ -425,9 +473,27 @@ def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     else:
         print(f"Implementations differ significantly (difference >= {tolerance})")
     
+def jax_tree_to_py(tree):
+    # Recursively convert JAX arrays to lists for JSON serialization
+    if isinstance(tree, dict):
+        return {k: jax_tree_to_py(v) for k, v in tree.items()}
+    elif isinstance(tree, (list, tuple)):
+        return [jax_tree_to_py(v) for v in tree]
+    elif hasattr(tree, "tolist"):
+        return tree.tolist()
+    else:
+        return tree
 
+def py_tree_to_jax(tree):
+    
+    if isinstance(tree, dict):
+        return {k: py_tree_to_jax(v) for k, v in tree.items()}
+    elif isinstance(tree, list):
+        return jnp.array(tree)
+    else:
+        return tree
 
-def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, runs_dir, parquet_dir, cfg):
+def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, parquet_dir, cfg):
 
     metrics_dict = {}
     rng = jax.random.PRNGKey(agent.seed)
@@ -437,6 +503,7 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     global_step = 0
     episode_count = 0
     start_time = time.time()
+    path_list = []
     
     obs, _ = env.reset()
     done = False
@@ -460,7 +527,9 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         obs_next, r, terminated, truncated, _ = env.step(jnp.array(a))
         done = terminated or truncated
         
-        # Log metrics similar to main_dqn
+        path_list.append(list(unwrapped_env.path))
+        
+        log_metric(writer, metrics_dict, "action", a, global_step)
         log_metric(writer, metrics_dict, "reward_per_timestep", r, global_step)
         log_metric(writer, metrics_dict, "is_done", done, global_step)
         
@@ -501,16 +570,116 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     min_episode_length = min(episode_lengths) if episode_lengths else 0
     print(f"Min episode length: {min_episode_length}")
     
-    # Save final metrics to pickle file
-    metrics_path = f"{runs_dir}/metrics.pkl"
-    with open(metrics_path, "wb") as f:
-        pickle.dump(metrics_dict, f)
-    print(f"Metrics saved to {metrics_path}")
     
-    # Save metrics to parquet
+    if isinstance(agent, NumpyQLearningAgent):
+        params_py = jax_tree_to_py(agent.linear_q_network.params)
+    elif isinstance(agent, FlaxQLearningAgent):
+        params_py = jax_tree_to_py(agent.train_state.params)
+    else:
+        raise ValueError(f"Unknown agent type")
+    
+    params_json = json.dumps(params_py)
+    
+    run_name = os.path.basename(parquet_dir)
     write_parquet_metrics(
-        cfg, metrics_dict, parquet_dir
+        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step, path_list
     )
+
+def eval_env(cfg, envs, path_list, model_params, action_mode, actions_list, seed, video_dir=None):
+    
+    if video_dir is not None:
+        os.makedirs(video_dir, exist_ok=True)
+        envs = PartialAndTotalRecordVideo(envs, video_dir)
+        print(f"Video recording enabled: {video_dir}")
+    
+    dict_path_list = [json.loads(p) if isinstance(p, str) else p for p in path_list]
+    print("****Evaluating****")
+    obs, _ = envs.reset(seed=seed)
+    terminations = np.array([False])
+    truncations = np.array([False])
+
+    hardcoded_actions = cfg.eval_params.hardcoded_actions
+    action_index = 0
+    
+    model_params = py_tree_to_jax(model_params)
+
+    if 'weight' in model_params and 'bias' in model_params:
+        # Numpy agent format
+        weight = model_params['weight']
+        bias = model_params['bias']
+        
+        image_shape = envs.observation_space["image"].shape
+        agent_pixel_view_edge_dim = cfg.training.agent_pixel_view_edge_dim
+        
+        def apply_q_network(x):
+            x_transformed = agent_observation_transform(x, agent_pixel_view_edge_dim, image_shape)
+            return jnp.dot(x_transformed, weight) + bias
+        
+        apply_q_network = jax.jit(apply_q_network)
+        
+    elif 'params' in model_params:
+        # Flax agent format
+        linear_q_network = LinearQNetworkFlax(num_actions=envs.action_space.n)
+        
+        image_shape = envs.observation_space["image"].shape
+        agent_pixel_view_edge_dim = cfg.training.agent_pixel_view_edge_dim
+        
+        q_state = TrainState.create(
+            apply_fn=linear_q_network.apply,
+            params=model_params,
+            tx=optax.sgd(learning_rate=cfg.training.step_size),
+        )
+        linear_q_network.apply = jax.jit(linear_q_network.apply)
+        
+        def apply_q_network(x):
+            x_transformed = agent_observation_transform(x, agent_pixel_view_edge_dim, image_shape)
+            return q_state.apply_fn(q_state.params, x_transformed)
+        
+    else:
+        raise ValueError(f"Unknown model_params format. Expected 'weight'/'bias' or 'params' keys, got: {list(model_params.keys())}")
+
+    if action_mode == "RECORDED_ACTIONS":
+        timesteps = len(actions_list)
+    elif path_list:
+        timesteps = len(dict_path_list)
+    else:
+        timesteps = cfg.training.total_timesteps
+    
+    for global_step in tqdm(range(timesteps)):
+        if action_mode == "RECORDED_ACTIONS":
+            envs.unwrapped.path = set(tuple(x) for x in dict_path_list[global_step])
+        
+        # todo : this needs to be tested
+        if action_mode == "HARDCODED_ACTIONS":
+            actions = jnp.array([hardcoded_actions[action_index]])
+            action_index += 1
+            if hardcoded_actions:
+                action_index %= len(hardcoded_actions)
+
+        
+        elif action_mode == "FINAL_POLICY":
+            q_values = apply_q_network(obs["image"])
+            actions = jnp.array([jnp.argmax(q_values)])
+            actions = jax.device_get(actions)
+            
+        elif action_mode == "RECORDED_ACTIONS":
+            actions = jnp.array([actions_list[global_step]])
+
+        if terminations or truncations:
+            next_obs, _ = envs.reset()
+            terminations = np.array([False])
+            truncations = np.array([False])
+        else:
+            next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+        
+        terminations = np.expand_dims(terminations, axis=0)
+        truncations = np.expand_dims(truncations, axis=0)
+        
+        obs = next_obs
+    
+    # Close the environment to ensure video is saved properly
+    envs.close()
+
         
 @hydra.main(config_path="../", config_name="linear_qlearning_config.yaml", version_base=None)
 def main(cfg):
@@ -519,31 +688,36 @@ def main(cfg):
     print(cfg)
 
 
-    # Create nested directory structure based on hyperparameters
     step_size_str = str(cfg.training.step_size)
-    runs_dir = os.path.join(
-        cfg.run_folder,
-        f"agent_name_{cfg.agent_name}",
-        f"path_mode_{cfg.path_mode}",
-        f"step_size_{step_size_str}",
-        f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
-        f"seed_{cfg.seed}",
-    )
-    parquet_dir = os.path.join(
+    
+    # Build base path components
+    path_components = [
         cfg.parquet_folder,
         f"agent_name_{cfg.agent_name}",
         f"path_mode_{cfg.path_mode}",
         f"step_size_{step_size_str}",
         f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
-        f"seed_{cfg.seed}",
-    )
-    print(f"Runs directory: {runs_dir}")
-    print(f"Parquet directory: {parquet_dir}")
-    os.makedirs(runs_dir, exist_ok=True)
+    ]
+    
+    # Only include nonstationary_path fields when path_mode is VISITED_CELLS
+    if cfg.path_mode == "VISITED_CELLS":
+        nonstationary_path_decay_pixels = cfg.nonstationary_path_decay_pixels
+        nonstationary_path_decay_chance = cfg.nonstationary_path_decay_chance
+        nonstationary_path_inclusion_pixels = cfg.nonstationary_path_inclusion_pixels
+        decay_chance_str = f"{float(nonstationary_path_decay_chance):.2f}".rstrip('0').rstrip('.')
+        path_components.extend([
+            f"nonstationary_path_decay_pixels_{nonstationary_path_decay_pixels}",
+            f"nonstationary_path_decay_chance_{decay_chance_str}",
+            f"nonstationary_path_inclusion_pixels_{nonstationary_path_inclusion_pixels}",
+        ])
+    
+    path_components.append(f"seed_{cfg.seed}")
+    parquet_dir = os.path.join(*path_components)
+    print(f"Output directory: {parquet_dir}")
     os.makedirs(parquet_dir, exist_ok=True)
 
-    # Set up tensorboard writer
-    writer = SummaryWriter(f"{runs_dir}")
+
+    writer = SummaryWriter(f"{parquet_dir}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s"
@@ -559,7 +733,18 @@ def main(cfg):
         seed=cfg.seed,
         show_optimal_path=cfg.render_options.show_optimal_path,
         path_mode=cfg.path_mode,
+        show_landmarks=cfg.show_landmarks,
+        nonstationary_path_decay_pixels=cfg.nonstationary_path_decay_pixels,
+        nonstationary_path_inclusion_pixels=cfg.nonstationary_path_inclusion_pixels,
+        nonstationary_path_decay_chance=cfg.nonstationary_path_decay_chance,
     )
+    
+    if cfg.capture_video:
+        video_dir = os.path.join(parquet_dir, "videos", "train")
+        os.makedirs(video_dir, exist_ok=True)
+        env = PartialAndTotalRecordVideo(env, video_dir)
+        print(f"Video recording enabled: {video_dir}")
+    
     env = gym.wrappers.RecordEpisodeStatistics(env)
     env = gym.wrappers.Autoreset(env)
     env.action_space.seed(cfg.seed)
@@ -594,7 +779,43 @@ def main(cfg):
     else:
         raise ValueError(f"Invalid q network type: {cfg.training.q_network_type}")
 
-    train(agent, env, total_timesteps=cfg.training.total_timesteps, writer=writer, runs_dir=runs_dir, parquet_dir=parquet_dir, cfg=cfg)
+    if cfg.eval:
+        if not cfg.eval_params.parquet_path:
+            raise ValueError("eval_params.parquet_path must be set when eval=True")
+        
+        with open(cfg.eval_params.parquet_path, "rb") as f:
+            metrics_df = pq.read_table(f).to_pandas()
+            path_list = metrics_df[metrics_df["metric"] == "path"][
+                "json_value"
+            ].tolist()
+            model_params = json.loads(
+                metrics_df[metrics_df["metric"] == "model_params_json"][
+                    "json_value"
+                ].values[0]
+            )
+            actions_list = metrics_df[metrics_df["metric"] == "action"][
+                "value"
+            ].tolist()
+            seed = int(metrics_df["seed"].iloc[0])
+        
+        action_mode = cfg.eval_params.action_mode
+        
+        video_dir = None
+        if cfg.capture_video:
+            video_dir = os.path.join(parquet_dir, "videos", "eval", action_mode.lower())
+        
+        eval_env(
+            cfg,
+            env,
+            path_list,
+            model_params,
+            action_mode,
+            actions_list,
+            seed,
+            video_dir=video_dir,
+        )
+    else:
+        train(agent, env, total_timesteps=cfg.training.total_timesteps, writer=writer, parquet_dir=parquet_dir, cfg=cfg)
     
     env.close()
     writer.close()
