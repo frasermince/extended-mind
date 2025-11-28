@@ -1,0 +1,3 @@
+account: rrg-gberseth_gpu
+cpus-per-task: 12
+mem-per-cpu: 2GB

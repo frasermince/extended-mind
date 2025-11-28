@@ -14,6 +14,7 @@ import itertools
 from collections.abc import Iterable
 import shlex
 import copy
+from job_script_templater import generate_job_script_from_template
 
 
 def read_config(conf_file_path):
@@ -52,7 +53,8 @@ def to_seconds(val):
     t = dateutil_parser.parse(val)
     return t.hour * 3600 + t.minute * 60 + t.second
 
-def compute_tasks_num_per_job(task_max_time, max_time_per_job):
+def compute_tasks_num_per_job(task_max_time, max_time_per_job, num_parallel_tasks=1):
+
     task_seconds = to_seconds(task_max_time)
     task_seconds = int(task_seconds * 1.2) # add 20% buffer time
     job_seconds = to_seconds(max_time_per_job)
@@ -61,35 +63,20 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job):
         print(f"ERROR: Task time with buffer ({task_seconds}s) exceeds job time ({job_seconds}s). No tasks can fit in this job.")
         return 0
     
-    return job_seconds // task_seconds
+    num_rounds = job_seconds // task_seconds
+    
+    total_tasks = num_parallel_tasks * num_rounds
+    
+    if num_parallel_tasks > 1:
+        print(f"Parallel execution: {num_parallel_tasks} tasks per round, {num_rounds} rounds = {total_tasks} total tasks per job")
+    else:
+        print(f"Sequential execution: {total_tasks} tasks per job")
+    
+    return total_tasks
 
 def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None, parquet_folder=None):
-    # Get the directory where this Python script is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    script = f"""#!/bin/bash
-#SBATCH --job-name=auto_slurm
-#SBATCH --output=auto_slurm_%j.out
-#SBATCH --error=auto_slurm_%j.err
-#SBATCH --time={max_job_time}
-#SBATCH --mem={cluster_conf['mem']}
-#SBATCH --account={cluster_conf['account']}
-"""
 
-    if cluster_conf['gpus']:
-        script += f"#SBATCH --gres=gpu:{cluster_conf['gpus']}"
-    else:
-        script += f"#SBATCH --cpus-per-task={cluster_conf['cpus_per_task']}"
-    
-    env_prep = f"""
-echo Start!
-git clone {script_dir} $SLURM_TMPDIR/extended-mind
-cd $SLURM_TMPDIR/extended-mind
-uv sync --offline
-
-    """
-
-    script += env_prep
+    commands = []
 
     for a_task_conf in task_confs:
         script_params = ""
@@ -114,16 +101,17 @@ uv sync --offline
         parquet_folder_param = f"parquet_folder={shlex.quote(parquet_folder)} " if parquet_folder else ""
         if(wandb_api_key == ""):
             print("Warning : launching without wandb tracking. Either the prgram does not have it or it has it and you have not specified the api key.")
-            script += f"\nuv run python src/{script_name}.py {run_folder_param}{parquet_folder_param}{script_params}"
+            commands.append(f"uv run python src/{script_name}.py {run_folder_param}{parquet_folder_param}{script_params}")
         else:
-            script += f"\nuv run python src/{script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}"
+            commands.append(f"uv run python src/{script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}")
 
-    script += "\necho Done!"
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script = generate_job_script_from_template(cluster_conf['cpus-per-task'], cluster_conf['mem-per-cpu'], max_job_time, cluster_conf['account'], commands, script_dir)
 
     return script
+    
 
-
-def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time, run_folder, parquet_folder):
+def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperparams, max_task_time, max_job_time, run_folder, parquet_folder, num_parallel_tasks=1):
         
     sweep_dict = {}
 
@@ -145,7 +133,7 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
 
     task_confs = dict_permutations(sweep_dict)
 
-    num_tasks_per_job = compute_tasks_num_per_job(max_task_time, max_job_time)
+    num_tasks_per_job = compute_tasks_num_per_job(max_task_time, max_job_time, num_parallel_tasks)
     print(f"Number of tasks per job: {num_tasks_per_job}")
 
     if num_tasks_per_job == 0:
@@ -155,7 +143,7 @@ def generate_task_configs_per_job(seeds, hyperparams_to_sweep, default_hyperpara
     for tc in task_confs:
 
         run_path = construct_run_path(tc, run_folder, parquet_folder)
-        print(f">>>>> Run path: {run_path}")
+        print(f">>>>> Run path: {run_path}") # TODO: comment this block if needed ... it can be too slow
         if check_if_file_exists(run_path):
             
             print(f"Skipping task: {run_path} because it already exists")
@@ -290,7 +278,8 @@ def main():
     hyperparam_sweep_conf = read_config(args.hyperparam_sweep_conf)
     hyperparam_default_conf = read_config(args.hyperparam_default_conf)
 
-    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder, args.parquet_folder)
+    num_parallel_tasks = cluster_conf['cpus-per-task']-1 # leave 1 CPU for overhead
+    task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder, args.parquet_folder, num_parallel_tasks)
 
     num_jobs = 0
     script_name = args.agent_name
