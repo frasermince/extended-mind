@@ -261,6 +261,7 @@ def write_parquet_metrics(
     model_params_json,
     global_step,
     path_list,
+    part_number=0,
 ):
     """Write all log_metric entries as a time-series Parquet part file.
 
@@ -333,14 +334,13 @@ def write_parquet_metrics(
                 }
             )
 
-    table = pa.Table.from_pylist(rows)
-
-    # Write to metrics subdirectory under the hyperparameter-partitioned base dir
     metrics_dir = os.path.join(metrics_parquet_dir, "metrics")
     os.makedirs(metrics_dir, exist_ok=True)
-    part_path = os.path.join(metrics_dir, f"part-{uuid.uuid4().hex}.parquet")
+    
+    part_path = os.path.join(metrics_dir, f"part-{part_number}.parquet")
+    table = pa.Table.from_pylist(rows)
     pq.write_table(table, part_path, compression="zstd", compression_level=3)
-    print(f"Metrics Parquet saved to {part_path}")
+    print(f"Metrics Parquet saved to {part_path} ({len(rows)} rows)")
         
 def compare_numpy_vs_flax_losses(cfg, num_comparisons: int = 5):
     '''
@@ -493,7 +493,16 @@ def py_tree_to_jax(tree):
     else:
         return tree
 
-def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, parquet_dir, cfg):
+def get_model_params_json(agent: NumpyQLearningAgent | FlaxQLearningAgent):
+    if isinstance(agent, NumpyQLearningAgent):
+        params_py = jax_tree_to_py(agent.linear_q_network.params)
+    elif isinstance(agent, FlaxQLearningAgent):
+        params_py = jax_tree_to_py(agent.train_state.params)
+    else:
+        raise ValueError(f"Unknown agent type")
+    return json.dumps(params_py)
+
+def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, parquet_dir, cfg, result_writing_interval: int = 10000):
 
     metrics_dict = {}
     rng = jax.random.PRNGKey(agent.seed)
@@ -504,12 +513,14 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
     episode_count = 0
     start_time = time.time()
     path_list = []
+    part_counter = 0  # Track part file number for sequential naming
     
     obs, _ = env.reset()
     done = False
     total_reward = 0
     episode_steps = 0
     avg_reward_per_global_step = 0
+    run_name = os.path.basename(parquet_dir)
 
     unwrapped_env = env.unwrapped
 
@@ -566,23 +577,25 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         # Progress indicator every 10000 steps
         if global_step % 10000 == 0:
             print(f"Training progress: {global_step}/{total_timesteps} steps completed")
+        
+        if global_step % result_writing_interval == 0:
+
+            params_json = get_model_params_json(agent)
+            write_parquet_metrics(
+                cfg, run_name, metrics_dict, parquet_dir, params_json, global_step, path_list, part_counter
+            )
+            # Clear memory after writing
+            metrics_dict = {"data": []}
+            path_list = []
+            part_counter += 1  # Increment for next part file
+
 
     min_episode_length = min(episode_lengths) if episode_lengths else 0
     print(f"Min episode length: {min_episode_length}")
     
-    
-    if isinstance(agent, NumpyQLearningAgent):
-        params_py = jax_tree_to_py(agent.linear_q_network.params)
-    elif isinstance(agent, FlaxQLearningAgent):
-        params_py = jax_tree_to_py(agent.train_state.params)
-    else:
-        raise ValueError(f"Unknown agent type")
-    
-    params_json = json.dumps(params_py)
-    
-    run_name = os.path.basename(parquet_dir)
+    params_json = get_model_params_json(agent)
     write_parquet_metrics(
-        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step, path_list
+        cfg, run_name, metrics_dict, parquet_dir, params_json, global_step, path_list, part_counter
     )
 
 def eval_env(cfg, envs, path_list, model_params, action_mode, actions_list, seed, video_dir=None):
