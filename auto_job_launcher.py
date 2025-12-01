@@ -43,10 +43,11 @@ def dict_permutations(input_dict):
 def submit_bash_script(bash_script_str):
     fd = os.open("auto_slurm.sh", os.O_WRONLY | os.O_CREAT)
     os.write(fd, bash_script_str.encode())
-    os.system("sbatch auto_slurm.sh")
-    os.close(fd)
-    os.remove("auto_slurm.sh")
-    sleep(2)
+    exit()
+    # os.system("sbatch auto_slurm.sh")
+    # os.close(fd)
+    # os.remove("auto_slurm.sh")
+    # sleep(2)
 
 def to_seconds(val):
     t = dateutil_parser.parse(val)
@@ -73,7 +74,7 @@ def compute_tasks_num_per_job(task_max_time, max_time_per_job, num_parallel_task
     
     return total_tasks
 
-def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None, parquet_folder=None):
+def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, script_name, run_folder=None, parquet_folder=None, gpus_zero=False, num_parallel_tasks=1, threads_per_task=1):
 
     commands = []
 
@@ -105,7 +106,7 @@ def generate_script(task_confs, cluster_conf, max_job_time, wandb_api_key, scrip
             commands.append(f"uv run python src/{script_name}.py wandb_api_key={shlex.quote(wandb_api_key)} {run_folder_param}{parquet_folder_param}{script_params}")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    script = generate_job_script_from_template(cluster_conf['cpus-per-task'], cluster_conf['mem-per-cpu'], max_job_time, cluster_conf['account'], commands, script_dir)
+    script = generate_job_script_from_template(num_parallel_tasks, threads_per_task, cluster_conf['mem_per_cpu'], max_job_time, cluster_conf['account'], commands, script_dir, gpus_zero)
 
     return script
     
@@ -277,14 +278,16 @@ def main():
     hyperparam_sweep_conf = read_config(args.hyperparam_sweep_conf)
     hyperparam_default_conf = read_config(args.hyperparam_default_conf)
 
-    num_parallel_tasks = cluster_conf['cpus-per-task']-1 # leave 1 CPU for overhead
+    num_parallel_tasks = cluster_conf.get('parallel_tasks', 1)
+    threads_per_task = cluster_conf.get('threads_per_task', 1)
+    gpus_zero = cluster_conf.get('gpus_zero', False)
     task_confs_per_job = generate_task_configs_per_job(list(range(args.num_seeds)), hyperparam_sweep_conf, hyperparam_default_conf, args.max_task_time, args.max_job_time, args.run_folder, args.parquet_folder, num_parallel_tasks)
 
     num_jobs = 0
     script_name = args.agent_name
     for one_job_task_confs in task_confs_per_job:
         print(f"Generating script for job {num_jobs+1}...")
-        script = generate_script(task_confs=one_job_task_confs, cluster_conf=cluster_conf, max_job_time=args.max_job_time, wandb_api_key=args.wandb_api_key, script_name=script_name, run_folder=args.run_folder, parquet_folder=args.parquet_folder)
+        script = generate_script(task_confs=one_job_task_confs, cluster_conf=cluster_conf, max_job_time=args.max_job_time, wandb_api_key=args.wandb_api_key, script_name=script_name, run_folder=args.run_folder, parquet_folder=args.parquet_folder, gpus_zero=gpus_zero, num_parallel_tasks=num_parallel_tasks, threads_per_task=threads_per_task)
         print(script)
         print("--------------------------------")
         if not args.dry_run:

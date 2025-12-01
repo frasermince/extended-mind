@@ -1,0 +1,4 @@
+account: rrg-adulyasa_cpu
+parallel_tasks: 11
+mem_per_cpu: 2GB
+threads_per_task: 2

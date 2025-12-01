@@ -4,11 +4,8 @@
 # account = "rrg-gberseth_gpu"
 # commands = ["\"command1\"", "\"command2\"", "\"command3\""].join("\n")
 
-def generate_job_script_from_template(cpus_per_task, mem_per_cpu, time, account, commands, script_dir):
-    commands = [f'"{cmd}"' for cmd in commands]
-    commands_str = "\n".join(commands) 
-
-    return f"""#!/bin/bash
+def sbatch_options(cpus_per_task, mem_per_cpu, time, account, gpus_zero):
+    sbatch_options_str = f"""
 #SBATCH --job-name=cpu_parallel_auto_slurm
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task={cpus_per_task}
@@ -16,32 +13,30 @@ def generate_job_script_from_template(cpus_per_task, mem_per_cpu, time, account,
 #SBATCH --time={time}
 #SBATCH --output=cpu_parallel_auto_slurm_%j.out
 #SBATCH --account={account}
-#SBATCH --gpus=0
-#SBATCH --partition=cpubase_bynode_b1
+"""
+
+    if gpus_zero:
+        gpus_str = "#SBATCH --gpus=0"
+        partition_str = "#SBATCH --partition=cpubase_bynode_b1"
+        sbatch_options_str += f"{gpus_str}\n{partition_str}"
+    
+    return sbatch_options_str
+
+
+def generate_job_script_from_template(num_parallel_tasks, threads_per_task, mem_per_cpu, time, account, commands, script_dir, gpus_zero):
+    commands = [f'"{cmd}"' for cmd in commands]
+    commands_str = "\n".join(commands)
+    cpus_per_task = (num_parallel_tasks * threads_per_task) + 1
+    sbatch_options_str = sbatch_options(cpus_per_task, mem_per_cpu, time, account, gpus_zero)
+
+    return f"""#!/bin/bash
+{sbatch_options_str}
 
 set -euo pipefail
 
 echo "Starting job on single node: $(hostname)"
-
-
-
-# Ensure required tools exist
-if ! command -v git >/dev/null 2>&1; then
-    echo "ERROR: git not found in PATH"
-    exit 1
-fi
-
-if ! command -v uv >/dev/null 2>&1; then
-    echo "ERROR: uv not found in PATH"
-    exit 1
-fi
-
-if ! command -v parallel >/dev/null 2>&1; then
-    echo "ERROR: GNU parallel not found in PATH"
-    exit 1
-fi
-
-echo "Using parallel: $(parallel --version | head -n1)"
+THREADS_PER_TASK={threads_per_task}
+NUM_JOBS={num_parallel_tasks}
 
 # Clone the repository once on the single node
 WORK_DIR="${{SLURM_TMPDIR:-/tmp}}/extended-mind"
@@ -66,26 +61,28 @@ echo "Allocated CPUs on node: ${{SLURM_CPUS_ON_NODE:-unknown}}"
 echo "Node: $(hostname)"
 echo ""
 
-# Calculate number of parallel jobs: cpus-per-task - 1 (leave 1 CPU for overhead)
+# Verify SLURM allocation
 if [ -z "${{SLURM_CPUS_PER_TASK:-}}" ]; then
     echo "ERROR: SLURM_CPUS_PER_TASK is not set"
     exit 1
 fi
 
-JOBS=$SLURM_CPUS_PER_TASK
-if (( JOBS > 1 )); then
-    JOBS=$((JOBS - 1))
-else
-    JOBS=1
-fi
+echo "CPUs per task (SLURM): $SLURM_CPUS_PER_TASK"
+echo "Parallel tasks: $NUM_JOBS"
+echo "Threads per task: $THREADS_PER_TASK"
+echo "Total CPU allocation: $NUM_JOBS tasks × $THREADS_PER_TASK threads = $((NUM_JOBS * THREADS_PER_TASK)) CPUs"
+echo "Reserved CPUs for overhead: 1"
+echo "Expected total: $((NUM_JOBS * THREADS_PER_TASK + 1)) CPUs"
 
-echo "CPUs per task: $SLURM_CPUS_PER_TASK"
-echo "Running $JOBS parallel jobs (using $((JOBS + 1)) CPUs: $JOBS for jobs + 1 reserved)"
+# Use the configured number of parallel tasks
+JOBS=$NUM_JOBS
+
+echo "Running $JOBS parallel jobs with $THREADS_PER_TASK threads each"
+echo "Number of commands: ${{#commands[@]}}"
 
 # Run commands in parallel using GNU parallel
-# Use explicit 'sh -c' so each line is treated as a full command,
-# regardless of parallel implementation/config.
-printf '%s\n' "${{commands[@]}}" | parallel -j "$JOBS" --will-cite --joblog parallel.log --tag sh -c '{{}}'
+# Set OMP_NUM_THREADS and MKL_NUM_THREADS before each Python command to prevent CPU oversubscription
+printf '%s\\n' "${{commands[@]}}" | parallel -j "$JOBS" --will-cite --joblog parallel.log --tag env OMP_NUM_THREADS=${{THREADS_PER_TASK}} MKL_NUM_THREADS=${{THREADS_PER_TASK}} sh -c '{{}}'
 
 echo ""
 echo "[$(date +%H:%M:%S)] All tasks completed!"

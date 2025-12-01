@@ -1,3 +1,5 @@
 account: rrg-gberseth_gpu
-cpus-per-task: 12
-mem-per-cpu: 2GB
+parallel_tasks: 12
+mem_per_cpu: 2GB
+threads_per_task: 2
+gpus_zero: true
