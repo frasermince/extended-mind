@@ -705,10 +705,15 @@ def main(cfg):
     step_size_str = str(cfg.training.step_size)
     
     # Build base path components
+    if cfg.show_landmarks:
+        path_mode_str = "LANDMARKS"
+    else:
+        path_mode_str = cfg.path_mode
+
     path_components = [
         cfg.parquet_folder,
         f"agent_name_{cfg.agent_name}",
-        f"path_mode_{cfg.path_mode}",
+        f"path_mode_{path_mode_str}",
         f"step_size_{step_size_str}",
         f"agent_pixel_view_edge_dim_{cfg.training.agent_pixel_view_edge_dim}",
     ]
