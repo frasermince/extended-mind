@@ -1,10 +1,14 @@
 agent_name: "linear_qlearning"
-parquet_folder: "./parquet"
+run_folder: "/home/esraa1/scratch/extended-mind/runs"
+parquet_folder: "/home/esraa1/scratch/extended-mind/parquet"
+capture_video: true
+
 
 seed: 1
 agent_view_size: 3
-max_steps: 1000
+max_steps: 200
 path_mode: "VISITED_CELLS"
+show_landmarks: false
 
 render_options:
   show_grid_lines: false
@@ -15,25 +19,27 @@ training:
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
   total_timesteps: 200000
   discount: 0.95
-  step_size: 1e-3
-  start_epsilon: 1.0
-  end_epsilon: 0.01
-  exploration_fraction: 0.5
-  agent_pixel_view_edge_dim: 20
+  step_size: .004
+  start_epsilon: 0.1
+  end_epsilon: 0.1
+  exploration_fraction: 1
+  agent_pixel_view_edge_dim: 24
   q_network_type: "flax"
-
-capture_video: false
-
-eval: false
-train: true
-
+  
 eval_params:
   action_mode: "RECORDED_ACTIONS"
   hardcoded_actions: null # todo for now comment out
   parquet_path: null # this is the path to the parquet file that contains the agent params and action recordings we might want to use in eval
-  
 
-nonstationary_path_decay_pixels: 720
+
+eval: false
+train: true
+
+nonstationary_path_decay_pixels: 650
 nonstationary_path_decay_chance: .25
-nonstationary_path_inclusion_pixels: 16
-show_landmarks: false
+nonstationary_path_inclusion_pixels: 24
+nonstationary_visitations_before_path_appearance: 1
+nonstationary_steps_before_path_visible: 0
+nonstationary_only_optimal: false
+nonstationary_max_path_count: 1
+tile_size: 8

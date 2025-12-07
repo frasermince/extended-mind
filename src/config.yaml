@@ -34,6 +34,12 @@ path_mode: "NONE" # NONE, SHORTEST_PATH, SLIGHTLY_SUBOPTIMAL_PATH, SUBOPTIMAL_PA
 nonstationary_path_decay_pixels: 720
 nonstationary_path_decay_chance: .25
 nonstationary_path_inclusion_pixels: 16
+nonstationary_visitations_before_path_appearance: 1
+nonstationary_steps_before_path_visible: 0
+nonstationary_only_optimal: false
+nonstationary_max_path_count: 1
+tile_size: 8
+
 
 show_landmarks: false
 

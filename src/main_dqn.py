@@ -60,6 +60,10 @@ def make_env(
     nonstationary_path_decay_pixels,
     nonstationary_path_inclusion_pixels,
     nonstationary_path_decay_chance,
+    nonstationary_visitations_before_path_appearance,
+    nonstationary_steps_before_path_visible,
+    nonstationary_only_optimal,
+    tile_size,
 ):
     def thunk():
         if capture_video and idx == 0:
@@ -76,6 +80,10 @@ def make_env(
                 nonstationary_path_decay_pixels=nonstationary_path_decay_pixels,
                 nonstationary_path_inclusion_pixels=nonstationary_path_inclusion_pixels,
                 nonstationary_path_decay_chance=nonstationary_path_decay_chance,
+                nonstationary_visitations_before_path_appearance=nonstationary_visitations_before_path_appearance,
+                nonstationary_steps_before_path_visible=nonstationary_steps_before_path_visible,
+                nonstationary_only_optimal=nonstationary_only_optimal,
+                tile_size=tile_size,
             )
             env = PartialAndTotalRecordVideo(
                 env,
@@ -777,6 +785,10 @@ def main(cfg):
         cfg.nonstationary_path_decay_pixels,
         cfg.nonstationary_path_inclusion_pixels,
         cfg.nonstationary_path_decay_chance,
+        cfg.nonstationary_visitations_before_path_appearance,
+        cfg.nonstationary_steps_before_path_visible,
+        cfg.nonstationary_only_optimal,
+        cfg.tile_size,
     )()
     assert isinstance(
         envs.action_space, gym.spaces.Discrete
