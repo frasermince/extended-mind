@@ -538,7 +538,8 @@ def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_t
         obs_next, r, terminated, truncated, _ = env.step(jnp.array(a))
         done = terminated or truncated
         
-        path_list.append(list(unwrapped_env.path))
+        if cfg.path_mode == "VISITED_CELLS":
+            path_list.append(list(unwrapped_env.path))
         
         log_metric(writer, metrics_dict, "action", a, global_step)
         log_metric(writer, metrics_dict, "reward_per_timestep", r, global_step)
