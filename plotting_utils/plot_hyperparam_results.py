@@ -23,6 +23,20 @@ matplotlib.rcParams.update(
     }
 )
 
+# Improved color palette (colorblind-friendly)
+COLORS = [
+    "#4c72b0",  # blue
+    "#dd8452",  # orange
+    "#55a868",  # green
+    "#c44e52",  # red
+    "#8172b3",  # purple
+    "#937860",  # brown
+    "#da8bc3",  # pink
+    "#8c8c8c",  # gray
+    "#ccb974",  # olive
+    "#64b5cd",  # cyan
+]
+
 
 # @title More Utility Code
 def _parse_learning_rate_from_run_key(run_key: str) -> str:
@@ -173,299 +187,11 @@ def _add_legend(ax: plt.Axes, title: str = "Network Size") -> None:
             handles,
             labels,
             title=title,
-            fontsize=8,
-            title_fontsize=9,
+            fontsize=12,
+            title_fontsize=12,
             loc="upper right",
             frameon=False,
         )
-
-
-# @title Plotting Code
-def _export_best_auc_per_seed_individual_plots(
-    df_all: pd.DataFrame,
-    output_dir: str,
-    ylabel: str = "Average Reward",
-) -> None:
-    """Export one PNG per seed for the best-AUC LR per (depth,width),
-    separated into subfolders for path visibility.
-
-    Expects columns:
-      - "average_reward_area_under_curve"
-      - "all_avg_episodic_reward" (list-of-lists [T][S])
-      - "learning_rate_str"
-    """
-    if df_all.empty:
-        return
-    if (
-        "average_reward_area_under_curve" not in df_all.columns
-        or "all_avg_episodic_reward" not in df_all.columns
-    ):
-        return
-
-    for opt_flag, subfolder in [(False, "pathless"), (True, "path")]:
-        df_panel = df_all[df_all["optimal_path"] == opt_flag]
-        if df_panel.empty:
-            continue
-        panel_dir = os.path.join(output_dir, subfolder)
-        os.makedirs(panel_dir, exist_ok=True)
-
-        groups = df_panel.groupby(["depth", "width"], dropna=False)
-        for (depth_val, width_val), sub in groups:
-            sub_valid = sub.dropna(
-                subset=[
-                    "average_reward_area_under_curve",
-                    "all_avg_episodic_reward",
-                ]
-            )
-            if sub_valid.empty:
-                continue
-            idx = sub_valid["average_reward_area_under_curve"].idxmax()
-            best_row = df_panel.loc[idx]
-
-            all_vals = best_row.get("all_avg_episodic_reward")
-            if not isinstance(all_vals, list) or len(all_vals) == 0:
-                continue
-            arr_ts = np.asarray(all_vals, dtype=float)
-            if arr_ts.ndim != 2:
-                continue
-            T, S = arr_ts.shape
-            # for every thousand but we sample for every ten. So divide by 100
-            x = np.arange(T, dtype=float) / 100.0
-            lr_str = str(best_row.get("learning_rate_str", "unknown"))
-
-            for s in range(S):
-                fig, ax = plt.subplots(figsize=(6, 3.6))
-                ax.plot(x, arr_ts[:, s], linewidth=1.2, color="#4C78A8")
-                ax.set_xlabel("Time Step (x 10^3)")
-                ax.set_ylabel(ylabel)
-                title = (
-                    f"{depth_val}x{width_val} | LR={lr_str} | "
-                    f"{'Path' if opt_flag else 'No Path'} | Seed {s+1}"
-                )
-                ax.set_title(title)
-                ax.spines["top"].set_visible(False)
-                ax.spines["right"].set_visible(False)
-                desired_ticks = [0, 10, 20, 30, 40, 50]
-                ticks_in_range = [t for t in desired_ticks if t <= int(x[-1])]
-                if ticks_in_range:
-                    ax.set_xticks(ticks_in_range)
-                    ax.set_xlim(0, ticks_in_range[-1])
-
-                fname = (
-                    f"best_auc_seed_{s+1}_depth_{int(depth_val)}_"
-                    f"width_{int(width_val)}_lr_{lr_str}.png"
-                )
-                outpath = os.path.join(panel_dir, fname)
-                fig.tight_layout()
-                # plt.show()
-                fig.savefig(outpath, dpi=150, bbox_inches="tight")
-                plt.close(fig)
-
-
-def _plot_lines_vs_width(
-    df: pd.DataFrame,
-    metric: str,
-    title: str,
-    output_path: str,
-) -> None:
-    """
-    For each learning rate, plot lines of metric vs width, one line per depth.
-    Useful to see how capacity scaling behaves at fixed lr.
-    """
-    learning_rates = _sort_unique(df["learning_rate_str"].unique().tolist())
-    num_lrs = len(learning_rates)
-
-    fig_width = max(4 * num_lrs, 6)
-    fig, axes = plt.subplots(
-        1, num_lrs, figsize=(fig_width, 4), squeeze=False, layout="constrained"
-    )
-
-    for idx, lr_str in enumerate(learning_rates):
-        ax = axes[0, idx]
-        sub = df[df["learning_rate_str"] == lr_str]
-        depths = sorted(sub["depth"].unique().tolist())
-
-        for depth in depths:
-            sub_depth = sub[sub["depth"] == depth]
-            sub_depth = sub_depth.sort_values("width").dropna(subset=[metric])
-            ax.plot(
-                sub_depth["width"],
-                sub_depth[metric],
-                marker="o",
-                label=f"depth={depth}",
-            )
-
-        ax.set_title(f"lr={lr_str}")
-        ax.set_xlabel("width")
-        ax.set_ylabel(metric)
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=8)
-
-    fig.suptitle(title)
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
-    # plt.show()
-
-
-def _compute_best_lr_success(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For each (depth, width), select the learning rate with the highest
-    avg_success_rate from aggregated JSON results, and capture both
-    success rate and average reward at that best LR.
-    Returns columns:
-      [depth, width, best_lr_str, best_success_rate, best_avg_reward]
-    """
-    idx = df.groupby(["depth", "width"])["avg_success_rate"].idxmax()
-    best = (
-        df.loc[
-            idx,
-            [
-                "depth",
-                "width",
-                "learning_rate_str",
-                "avg_success_rate",
-                "avg_average_episodic_reward",
-            ],
-        ]
-        .rename(
-            columns={
-                "learning_rate_str": "best_lr_str",
-                "avg_success_rate": "best_success_rate",
-                "avg_average_episodic_reward": "best_avg_reward",
-            }
-        )
-        .sort_values(["depth", "width"])
-    )  # type: ignore[call-arg]
-    best = best.reset_index(drop=True)
-    return best
-
-
-# Removed seed-based computation; we select the best LR from JSON only.
-
-
-def _plot_bars_capacity(
-    df_vals: pd.DataFrame,
-    value_col: str,
-    title: str,
-    ylabel: str,
-    output_path: str,
-) -> None:
-    """
-    Bar chart with x=capacity label "depthxwidth" and y=value_col.
-    """
-    if df_vals.empty:
-        return
-    df_vals = df_vals.copy().sort_values(["depth", "width"])
-    labels = [f"{d}x{w}" for d, w in zip(df_vals["depth"], df_vals["width"])]
-    values = df_vals[value_col].to_numpy(dtype=float)
-
-    fig, ax = plt.subplots(figsize=(max(8, 0.6 * len(labels)), 4))
-    x = np.arange(len(labels))
-    ax.bar(x, values, color="#4C78A8")
-    ax.set_xticks(x)
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(axis="y", alpha=0.3)
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
-    # plt.show()
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
-
-
-def _plot_combined_lines_by_lr(
-    df: pd.DataFrame,
-    metric: str,
-    title: str,
-    ylabel: str,
-    output_path: str,
-) -> None:
-    """
-    Combined line chart where each line is a (depth, width) capacity and the
-    x-axis enumerates learning rates (sorted). y-axis is the given metric.
-    """
-    if df.empty:
-        return
-
-    # All learning rates sorted numerically, keep string labels for ticks
-    lr_strs = _sort_unique(df["learning_rate_str"].unique().tolist())
-    x = np.arange(len(lr_strs))
-
-    base_width = max(8, 0.6 * len(lr_strs))
-    fig_width = base_width + 3.0  # reserve space on the right for legend
-    fig, ax = plt.subplots(figsize=(fig_width, 5))
-
-    # Build a stable color mapping per (depth, width) capacity
-    base_pairs = df[["depth", "width"]].drop_duplicates()
-    base_pairs = base_pairs.sort_values(["depth", "width"])  # type: ignore
-    pairs = base_pairs.itertuples(index=False, name=None)
-    pairs = list(pairs)
-    num_pairs = max(1, len(pairs))
-    cmap = plt.get_cmap("tab20")
-    pair_to_color: Dict[tuple, tuple] = {
-        pair: cmap(idx / max(1, num_pairs - 1)) for idx, pair in enumerate(pairs)
-    }
-
-    # Each line corresponds to a unique (depth, width, optimal_path) triple
-    caps_df = df[["depth", "width", "optimal_path"]].drop_duplicates()
-    caps_df = caps_df.sort_values(["optimal_path", "depth", "width"])  # type: ignore
-    capacities = caps_df.itertuples(index=False, name=None)
-
-    for depth_val, width_val, optimal_path_val in capacities:
-        sub = df[
-            (df["depth"] == depth_val)
-            & (df["width"] == width_val)
-            & (df["optimal_path"] == optimal_path_val)
-        ]
-        sub_map = {
-            lr: v
-            for lr, v in zip(
-                sub["learning_rate_str"].tolist(),
-                sub[metric].tolist(),
-            )
-        }
-        y = np.array([sub_map.get(lr, np.nan) for lr in lr_strs], dtype=float)
-        # Style by optimal_path for clear differentiation
-        linestyle = "-" if optimal_path_val else "--"
-        marker = "o" if optimal_path_val else "x"
-        color = pair_to_color[(depth_val, width_val)]
-
-        ax.plot(
-            x,
-            y,
-            marker=marker,
-            linewidth=1.8,
-            alpha=0.9,
-            linestyle=linestyle,
-            color=color,
-            label=(
-                f"{depth_val}x{width_val}"
-                + (" | optimal_path" if optimal_path_val else "")
-            ),
-        )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(lr_strs, rotation=45, ha="right")
-    ax.set_xlabel("learning rate")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend(
-        title="depth x width | optimal_path",
-        fontsize=8,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        borderaxespad=0.0,
-    )
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    # plt.show()
 
 
 def _build_pair_color_map(
@@ -486,135 +212,6 @@ def _build_pair_color_map(
         pair: cmap(idx / max(1, num_pairs - 1)) for idx, pair in enumerate(pairs)
     }
     return pair_to_color
-
-
-def _plot_combined_lines_by_lr_filtered(
-    df_all: pd.DataFrame,
-    df_filtered: pd.DataFrame,
-    metric: str,
-    title: str,
-    ylabel: str,
-    output_path: str,
-    pair_to_color: Optional[Dict[Tuple[int, int], tuple]] = None,
-) -> None:
-    """Plot combined lines for a filtered subset (e.g., only optimal_path).
-
-    Colors are assigned by (depth,width) using a shared mapping so that
-    colors match across related plots.
-    """
-    if df_filtered.empty:
-        return
-
-    lr_strs = _sort_unique(df_filtered["learning_rate_str"].unique().tolist())
-    x = np.arange(len(lr_strs))
-
-    base_width = max(8, 0.6 * len(lr_strs))
-    fig_width = base_width + 3.0
-    fig, ax = plt.subplots(figsize=(fig_width, 5))
-
-    if pair_to_color is None:
-        pair_to_color = _build_pair_color_map(df_all)
-
-    caps_df = df_filtered[["depth", "width"]].drop_duplicates()
-    caps_df = caps_df.sort_values(["depth", "width"])  # type: ignore
-    capacities = caps_df.itertuples(index=False, name=None)
-
-    for depth_val, width_val in capacities:
-        sub = df_filtered[
-            (df_filtered["depth"] == depth_val) & (df_filtered["width"] == width_val)
-        ]
-        sub_map = {
-            lr: v
-            for lr, v in zip(
-                sub["learning_rate_str"].tolist(),
-                sub[metric].tolist(),
-            )
-        }
-        y = np.array([sub_map.get(lr, np.nan) for lr in lr_strs], dtype=float)
-
-        ax.plot(
-            x,
-            y,
-            marker="o",
-            linewidth=1.8,
-            alpha=0.9,
-            linestyle="-",
-            color=pair_to_color[(depth_val, width_val)],
-            label=f"{depth_val}x{width_val}",
-        )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(lr_strs, rotation=45, ha="right")
-    ax.set_xlabel("learning rate")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
-    ax.legend(
-        title="depth x width",
-        fontsize=8,
-        loc="center left",
-        bbox_to_anchor=(1.02, 0.5),
-        borderaxespad=0.0,
-    )
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    # plt.show()
-
-
-def _draw_combined_lines_on_ax(
-    ax,
-    df_filtered: pd.DataFrame,
-    metric: str,
-    lr_strs: List[str],
-    pair_to_color: Dict[Tuple[int, int], tuple],
-    ylabel: str,
-    title: str,
-) -> None:
-    """Draw the combined-lines chart on a provided Axes.
-
-    - Colors are assigned by (depth,width) using pair_to_color
-    - Solid lines with circle markers are used
-    """
-    x = np.arange(len(lr_strs))
-
-    caps_df2 = df_filtered[["depth", "width"]].drop_duplicates()
-    caps_df2 = caps_df2.sort_values(["depth", "width"])  # type: ignore
-    capacities = caps_df2.itertuples(index=False, name=None)
-
-    for depth_val, width_val in capacities:
-        sub = df_filtered[
-            (df_filtered["depth"] == depth_val) & (df_filtered["width"] == width_val)
-        ]
-
-        sub_map = {
-            lr: v
-            for lr, v in zip(
-                sub["learning_rate_str"].tolist(),
-                sub[metric].tolist(),
-            )
-        }
-        y = np.array([sub_map.get(lr, np.nan) for lr in lr_strs], dtype=float)
-
-        ax.plot(
-            x,
-            y,
-            marker="o",
-            linewidth=1.8,
-            alpha=0.9,
-            linestyle="-",
-            color=pair_to_color[(depth_val, width_val)],
-            label=f"{depth_val}x{width_val}",
-        )
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(lr_strs, rotation=45, ha="right")
-    ax.set_xlabel("Step-size")
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
-    ax.grid(True, alpha=0.3)
 
 
 def _plot_side_by_side_path_vs_pathless(
@@ -676,12 +273,13 @@ def _plot_side_by_side_path_vs_pathless(
             )
             _mark_curve_max(ax, x, y, color)
 
-        # X ticks are LR strings
-        ax.set_title(title)
+        # X ticks are LR strings - styling with larger fonts
+        ax.tick_params(axis="both", which="major", labelsize=14)
+        ax.set_title(title, fontsize=16)
         ax.set_xticks(x)
         ax.set_xticklabels(lr_strs_local, rotation=45, ha="right")
-        ax.set_xlabel("Step-size")
-        ax.set_ylabel(ylabel)
+        ax.set_xlabel("Step-size", fontsize=14)
+        ax.set_ylabel(ylabel, fontsize=14)
 
         # Visual cleanup & snap limits to ticks
         _strip_axes(ax)
@@ -709,8 +307,9 @@ def _plot_side_by_side_path_vs_pathless(
     for ax in axes[0, :]:
         if ax.get_visible():
             _add_legend(ax, "Network Size")
+            ax.legend(fontsize=12, title_fontsize=12)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(_to_pdf_path(output_path), bbox_inches="tight")
     # plt.show()
@@ -817,9 +416,11 @@ def _plot_best_auc_reward_curves_side_by_side(
         #         color='gray',
         #         label='Max',)
 
-        ax.set_title(title)
-        ax.set_xlabel("Time Step (x $10^3$)")
-        ax.set_ylabel("Average Reward")
+        # Styling with larger fonts
+        ax.set_title(title, fontsize=18)
+        ax.set_xlabel("Time Step (x $10^3$)", fontsize=16, labelpad=10)
+        ax.set_ylabel("Average Reward", fontsize=16, labelpad=10)
+        ax.tick_params(axis="both", which="major", labelsize=14)
         # Specific x-ticks and limits (0..50), representing thousands of steps
 
         max_x = panel_max_x + 1 if panel_max_x is not None else 100
@@ -833,7 +434,7 @@ def _plot_best_auc_reward_curves_side_by_side(
         ax.spines["right"].set_visible(False)
 
     # Create figure and draw panels
-    fig, axes = plt.subplots(1, len(paths), figsize=(15, 4.5), squeeze=False)
+    fig, axes = plt.subplots(1, len(paths), figsize=(18, 6), squeeze=False)
 
     for i, (path_label, df) in enumerate(paths):
         _draw_panel(axes[0, i], df, path_label)
@@ -860,151 +461,14 @@ def _plot_best_auc_reward_curves_side_by_side(
         if handles and labels:
             ax_right.legend(
                 title="Network Size",
-                fontsize=8,
-                title_fontsize=9,
+                fontsize=12,
+                title_fontsize=14,
                 loc="upper left",
                 frameon=False,
             )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-    # plt.show()
-
-
-def _plot_best_auc_per_seed_curves_side_by_side(
-    df_all: pd.DataFrame,
-    title_base: str,
-    ylabel: str,
-    output_path: str,
-) -> None:
-    """Side-by-side panels where, for each (depth,width), we pick the LR with
-    max AUC and plot all per-seed curves (thin), plus the mean curve (bold).
-
-    Requires columns in the input DataFrame:
-      - "average_reward_area_under_curve"
-      - "all_avg_episodic_reward" (shape [T][S])
-      - "average_reward_curve" (for the overlaid mean)
-    """
-    if df_all.empty:
-        return
-    if (
-        "average_reward_area_under_curve" not in df_all.columns
-        or "all_avg_episodic_reward" not in df_all.columns
-        or "average_reward_curve" not in df_all.columns
-    ):
-        return
-
-    df_path = df_all[df_all["optimal_path"] == True]  # noqa: E712
-    df_pathless = df_all[df_all["optimal_path"] == False]  # noqa: E712
-
-    if df_path.empty and df_pathless.empty:
-        return
-
-    pair_to_color = _build_pair_color_map(df_all)
-
-    def _draw_panel(ax, df_panel: pd.DataFrame, title: str) -> None:
-        if df_panel.empty:
-            ax.set_visible(False)
-            return
-        groups = df_panel.groupby(["depth", "width"], dropna=False)
-        panel_max_x: Optional[int] = None
-        for (depth_val, width_val), sub in groups:
-            sub_valid = sub.dropna(
-                subset=[
-                    "average_reward_area_under_curve",
-                    "all_avg_episodic_reward",
-                    "average_reward_curve",
-                ]
-            )
-            if sub_valid.empty:
-                continue
-            idx = sub_valid["average_reward_area_under_curve"].idxmax()
-            best_row = df_panel.loc[idx]
-
-            # Per-seed curves: list-of-lists [T][S]
-            all_vals = best_row.get("all_avg_episodic_reward")
-            if not isinstance(all_vals, list) or len(all_vals) == 0:
-                continue
-            arr_ts = np.asarray(all_vals, dtype=float)  # shape [T, S]
-            if arr_ts.ndim != 2:
-                continue
-            T = arr_ts.shape[0]
-            x = np.arange(T, dtype=float) / 1000.0
-            panel_max_x = max(panel_max_x or 0, int(x[-1]))
-
-            color = pair_to_color[(int(depth_val), int(width_val))]
-
-            # Plot each seed (thin, translucent)
-            for s in range(arr_ts.shape[1]):
-                ax.plot(
-                    x,
-                    arr_ts[:, s],
-                    linewidth=0.8,
-                    alpha=0.25,
-                    linestyle="-",
-                    color=color,
-                )
-
-            # Overlay mean curve (bold)
-            mean_curve = np.asarray(best_row["average_reward_curve"], dtype=float)
-            ax.plot(
-                x,
-                mean_curve,
-                linewidth=1.4,
-                alpha=0.95,
-                linestyle="-",
-                color=color,
-                label=f"{int(depth_val)}x{int(width_val)}",
-            )
-
-        ax.set_title(title)
-        ax.set_xlabel("Time Step (x 10^3)")
-        ax.set_ylabel(ylabel)
-        max_x = panel_max_x if panel_max_x is not None else 50
-        desired_ticks = [0, 10, 20, 30, 40, 50]
-        ticks_in_range = [t for t in desired_ticks if t <= max_x]
-        if ticks_in_range:
-            ax.set_xticks(ticks_in_range)
-            ax.set_xlim(0, ticks_in_range[-1])
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), squeeze=False)
-    ax_left = axes[0, 0]
-    ax_right = axes[0, 1]
-
-    _draw_panel(ax_left, df_pathless, "Path Not Visible (per-seed)")
-    _draw_panel(ax_right, df_path, "Path Visible (per-seed)")
-
-    # Match y-limits
-    ymins: List[float] = []
-    ymaxs: List[float] = []
-    for ax in [ax_left, ax_right]:
-        if ax.get_visible():
-            ymin, ymax = ax.get_ylim()
-            ymins.append(ymin)
-            ymaxs.append(ymax)
-    if ymins and ymaxs:
-        common_ylim = (min(ymins), max(ymaxs))
-        for ax in [ax_left, ax_right]:
-            if ax.get_visible():
-                ax.set_ylim(*common_ylim)
-
-    if ax_right.get_visible():
-        handles, labels = ax_right.get_legend_handles_labels()
-        if handles and labels:
-            ax_right.legend(
-                title="Network Size",
-                fontsize=8,
-                title_fontsize=9,
-                loc="upper left",
-                frameon=False,
-            )
-
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     # plt.show()
@@ -1031,14 +495,8 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     sample_dot_alpha: float = 0.75,
     sample_jitter: float = 0,
 ) -> None:
-    colors = [
-        "#EC8380",  # red
-        "#29AB87",  # green
-        "#89BEDF",  # blue
-        "#F5B041",  # orange
-        "#9B59B6",  # purple
-        "#FF6B6B",  # coral
-    ]
+    # Use the global color palette
+    colors = COLORS
     for path_label, df in paths:
         if df.empty:
             return
@@ -1272,11 +730,12 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     ax.spines["right"].set_visible(False)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title)
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.set_title(title, fontsize=16)
+    ax.tick_params(axis="both", which="major", labelsize=12)
     ax.grid(False)
-    ax.legend(loc="upper left", frameon=False)
+    ax.legend(loc="upper left", frameon=False, fontsize=12)
 
     # Ensure the y-axis upper limit ends at the next major tick above data max
     try:
@@ -1324,8 +783,8 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         pass
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    fig.tight_layout(pad=1.5)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
     # plt.show()
     plt.close(fig)
 
