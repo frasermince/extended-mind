@@ -502,7 +502,7 @@ def get_model_params_json(agent: NumpyQLearningAgent | FlaxQLearningAgent):
         raise ValueError(f"Unknown agent type")
     return json.dumps(params_py)
 
-def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, parquet_dir, cfg, result_writing_interval: int = 10000):
+def train(agent: NumpyQLearningAgent | FlaxQLearningAgent, env: gym.Env, total_timesteps: int, writer, parquet_dir, cfg, result_writing_interval: int = 250000):
 
     metrics_dict = {}
     rng = jax.random.PRNGKey(agent.seed)
