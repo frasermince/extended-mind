@@ -1,0 +1,14 @@
+training.agent_pixel_view_edge_dim:
+  - 24
+  - 20
+  - 16
+  - 8
+  - 4
+nonstationary_path_decay_pixels:
+  - 600
+nonstationary_path_decay_chance:
+  - .005
+  - .01
+  - .025
+nonstationary_path_inclusion_pixels:
+  - 22
