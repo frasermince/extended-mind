@@ -4,6 +4,10 @@ training.agent_pixel_view_edge_dim:
   - 16
   - 8
   - 4
+
+path_mode:
+  - VISITED_CELLS
+
 nonstationary_path_decay_pixels:
   - 600
 nonstationary_path_decay_chance:
