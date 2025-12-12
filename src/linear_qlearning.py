@@ -723,7 +723,7 @@ def main(cfg):
         nonstationary_path_decay_pixels = cfg.nonstationary_path_decay_pixels
         nonstationary_path_decay_chance = cfg.nonstationary_path_decay_chance
         nonstationary_path_inclusion_pixels = cfg.nonstationary_path_inclusion_pixels
-        decay_chance_str = f"{float(nonstationary_path_decay_chance):.2f}".rstrip('0').rstrip('.')
+        decay_chance_str = str(float(nonstationary_path_decay_chance))
         path_components.extend([
             f"nonstationary_path_decay_pixels_{nonstationary_path_decay_pixels}",
             f"nonstationary_path_decay_chance_{decay_chance_str}",
