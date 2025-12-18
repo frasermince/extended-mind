@@ -666,7 +666,7 @@ def train(
     path_list = []
     part_counter = 0  # Track part file number for sequential naming
 
-    obs, _ = env.reset()
+    obs, _ = env.reset(seed=cfg.seed)
     done = False
     total_reward = 0
     episode_steps = 0
