@@ -571,6 +571,7 @@ class SaltAndPepper(MiniGridEnv):
         nonstationary_only_optimal: bool = False,
         nonstationary_max_path_count: int = 1,
         tile_size: int = TILE_PIXELS,
+        path_width: int = 3,
         **kwargs,
     ):
         self.seed = kwargs.pop("seed", None)
@@ -591,6 +592,7 @@ class SaltAndPepper(MiniGridEnv):
         self.nonstationary_only_optimal = nonstationary_only_optimal
         self.nonstationary_max_path_count = nonstationary_max_path_count
         self.tile_size = tile_size
+        self.path_width = path_width
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
@@ -917,13 +919,19 @@ class SaltAndPepper(MiniGridEnv):
 
         # Determine the set of pixels from which to sample.
         (x, y) = agent_pos
+
+        path_width_on_side = self.path_width // 2
         if action == 0:  # left
             x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
                 -self.tile_size, 0
             )
-            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(-1, 2)
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
         elif action == 1:  # up
-            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(-1, 2)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
             y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
                 -self.tile_size, 0
             )
@@ -931,9 +939,13 @@ class SaltAndPepper(MiniGridEnv):
             x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
                 0, self.tile_size + 0
             )
-            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(-1, 2)
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
         elif action == 3:  # down
-            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(-1, 2)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
             y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
                 0, self.tile_size + 0
             )

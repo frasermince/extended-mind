@@ -1,12 +1,10 @@
 agent_name: "linear_qlearning"
-run_folder: "/home/esraa1/scratch/extended-mind/runs"
-parquet_folder: "/home/esraa1/scratch/extended-mind/parquet"
-capture_video: true
-
+parquet_folder: "./parquet"
+capture_video: false
 
 seed: 1
 agent_view_size: 3
-max_steps: 200
+max_steps: 1000
 path_mode: "VISITED_CELLS"
 show_landmarks: false
 
@@ -19,9 +17,9 @@ training:
   env_id: "MiniGrid-SaltAndPepper-v0-custom"
   total_timesteps: 200000
   discount: 0.95
-  step_size: .004
-  start_epsilon: 0.1
-  end_epsilon: 0.1
+  step_size: .002
+  start_epsilon: 0.05
+  end_epsilon: 0.05
   exploration_fraction: 1
   agent_pixel_view_edge_dim: 24
   q_network_type: "flax"
@@ -35,11 +33,21 @@ eval_params:
 eval: false
 train: true
 
+# Basic nonstationary params
 nonstationary_path_decay_pixels: 650
 nonstationary_path_decay_chance: .25
 nonstationary_path_inclusion_pixels: 24
+
+# Counter based
 nonstationary_visitations_before_path_appearance: 1
-nonstationary_steps_before_path_visible: 0
-nonstationary_only_optimal: false
 nonstationary_max_path_count: 1
+
+# Seasonal
+nonstationary_steps_before_path_visible: 0
+
+# Only optimal param
+nonstationary_only_optimal: false
+
 tile_size: 8
+
+path_width: 3

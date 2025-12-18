@@ -11,7 +11,8 @@ import time
 import uuid
 import json
 import numpy as np
-from tensorboardX import SummaryWriter
+
+# from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
 import pyarrow as pa
@@ -240,8 +241,8 @@ def linear_schedule(start_e: float, end_e: float, duration: int, t: int):
     return max(slope * t + start_e, end_e)
 
 
-def log_metric(writer, metrics_dict, name, value, step, step_type="global_step"):
-    writer.add_scalar(name, value, step)
+def log_metric(metrics_dict, name, value, step, step_type="global_step"):
+    # writer.add_scalar(name, value, step)
     if "data" not in metrics_dict:
         metrics_dict["data"] = []
     metrics_dict["data"].append(
@@ -361,6 +362,13 @@ def write_parquet_metrics(
     model_params_json,
     global_step,
     path_list,
+    nonstationary_path_decay_pixels,
+    nonstationary_path_decay_chance,
+    nonstationary_path_inclusion_pixels,
+    nonstationary_visitations_before_path_appearance,
+    nonstationary_steps_before_path_visible,
+    nonstationary_only_optimal,
+    nonstationary_max_path_count,
     part_number=0,
 ):
     """Write all log_metric entries as a time-series Parquet part file.
@@ -394,6 +402,13 @@ def write_parquet_metrics(
                 # keep numeric values in `value` and reserve strings for `json_value`
                 "json_value": None,
                 "step_type": str(item.get("step_type", "global_step")),
+                "nonstationary_path_decay_pixels": nonstationary_path_decay_pixels,
+                "nonstationary_path_decay_chance": nonstationary_path_decay_chance,
+                "nonstationary_path_inclusion_pixels": nonstationary_path_inclusion_pixels,
+                "nonstationary_visitations_before_path_appearance": nonstationary_visitations_before_path_appearance,
+                "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
+                "nonstationary_only_optimal": nonstationary_only_optimal,
+                "nonstationary_max_path_count": nonstationary_max_path_count,
             }
         )
 
@@ -413,6 +428,13 @@ def write_parquet_metrics(
                 "value": None,
                 "json_value": model_params_json,
                 "step_type": "global_step",
+                "nonstationary_path_decay_pixels": nonstationary_path_decay_pixels,
+                "nonstationary_path_decay_chance": nonstationary_path_decay_chance,
+                "nonstationary_path_inclusion_pixels": nonstationary_path_inclusion_pixels,
+                "nonstationary_visitations_before_path_appearance": nonstationary_visitations_before_path_appearance,
+                "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
+                "nonstationary_only_optimal": nonstationary_only_optimal,
+                "nonstationary_max_path_count": nonstationary_max_path_count,
             }
         )
 
@@ -431,6 +453,13 @@ def write_parquet_metrics(
                     "value": None,
                     "json_value": json.dumps(path),
                     "step_type": "global_step",
+                    "nonstationary_path_decay_pixels": nonstationary_path_decay_pixels,
+                    "nonstationary_path_decay_chance": nonstationary_path_decay_chance,
+                    "nonstationary_path_inclusion_pixels": nonstationary_path_inclusion_pixels,
+                    "nonstationary_visitations_before_path_appearance": nonstationary_visitations_before_path_appearance,
+                    "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
+                    "nonstationary_only_optimal": nonstationary_only_optimal,
+                    "nonstationary_max_path_count": nonstationary_max_path_count,
                 }
             )
 
@@ -620,7 +649,7 @@ def train(
     agent: NumpyQLearningAgent | FlaxQLearningAgent,
     env: gym.Env,
     total_timesteps: int,
-    writer,
+    # writer,
     parquet_dir,
     cfg,
     result_writing_interval: int = 250000,
@@ -667,9 +696,9 @@ def train(
         # if cfg.path_mode == "VISITED_CELLS":
         #     path_list.append(list(unwrapped_env.path))
 
-        log_metric(writer, metrics_dict, "action", a, global_step)
-        log_metric(writer, metrics_dict, "reward_per_timestep", r, global_step)
-        log_metric(writer, metrics_dict, "is_done", done, global_step)
+        log_metric(metrics_dict, "action", a, global_step)
+        log_metric(metrics_dict, "reward_per_timestep", r, global_step)
+        log_metric(metrics_dict, "is_done", done, global_step)
 
         agent.update_q_values(
             obs["image"], a, r, obs_next["image"], done, agent.discount
@@ -689,7 +718,6 @@ def train(
 
             # Log episode metrics
             log_metric(
-                writer,
                 metrics_dict,
                 "charts/success_rate",
                 total_reward,
@@ -697,7 +725,6 @@ def train(
                 "episode",
             )
             log_metric(
-                writer,
                 metrics_dict,
                 "charts/average_episodic_reward",
                 total_reward / episode_steps,
@@ -705,20 +732,16 @@ def train(
                 "episode",
             )
             log_metric(
-                writer,
                 metrics_dict,
                 "charts/episodic_length",
                 episode_steps,
                 global_step,
             )
-            log_metric(
-                writer, metrics_dict, "charts/episode_count", episode_count, global_step
-            )
+            log_metric(metrics_dict, "charts/episode_count", episode_count, global_step)
 
-            # if global_step % 1000 == 0:
-            #     print(
-            #         f"Episode {episode_count} - Episode Length: {episode_steps} - Total Reward: {total_reward}, Episode Steps: {episode_steps}, Global Step: {global_step}, Avg Reward/Global Step: {avg_reward_per_global_step:.4f}"
-            #     )
+            print(
+                f"Episode {episode_count} - Episode Length: {episode_steps} - Overall Total Reward: {sum(episode_rewards)} - Total Reward: {total_reward}, Episode Steps: {episode_steps}, Global Step: {global_step}, Avg Reward/Global Step: {avg_reward_per_global_step:.4f}"
+            )
 
             total_reward = 0
             episode_steps = 0
@@ -726,7 +749,7 @@ def train(
         # Log SPS (Steps Per Second) every 100 steps
         if global_step % 100 == 0:
             sps = int(global_step / (time.time() - start_time))
-            log_metric(writer, metrics_dict, "charts/SPS", sps, global_step)
+            log_metric(metrics_dict, "charts/SPS", sps, global_step)
 
         # Progress indicator every 10000 steps
         if global_step % 10000 == 0:
@@ -743,7 +766,14 @@ def train(
                 params_json,
                 global_step,
                 path_list,
-                part_counter,
+                part_number=part_counter,
+                nonstationary_path_decay_pixels=cfg.nonstationary_path_decay_pixels,
+                nonstationary_path_decay_chance=cfg.nonstationary_path_decay_chance,
+                nonstationary_path_inclusion_pixels=cfg.nonstationary_path_inclusion_pixels,
+                nonstationary_visitations_before_path_appearance=cfg.nonstationary_visitations_before_path_appearance,
+                nonstationary_steps_before_path_visible=cfg.nonstationary_steps_before_path_visible,
+                nonstationary_only_optimal=cfg.nonstationary_only_optimal,
+                nonstationary_max_path_count=cfg.nonstationary_max_path_count,
             )
             # Clear memory after writing
             metrics_dict = {"data": []}
@@ -762,7 +792,14 @@ def train(
         params_json,
         global_step,
         path_list,
-        part_counter,
+        part_number=part_counter,
+        nonstationary_path_decay_pixels=cfg.nonstationary_path_decay_pixels,
+        nonstationary_path_decay_chance=cfg.nonstationary_path_decay_chance,
+        nonstationary_path_inclusion_pixels=cfg.nonstationary_path_inclusion_pixels,
+        nonstationary_visitations_before_path_appearance=cfg.nonstationary_visitations_before_path_appearance,
+        nonstationary_steps_before_path_visible=cfg.nonstationary_steps_before_path_visible,
+        nonstationary_only_optimal=cfg.nonstationary_only_optimal,
+        nonstationary_max_path_count=cfg.nonstationary_max_path_count,
     )
 
 
@@ -912,12 +949,12 @@ def main(cfg):
     print(f"Output directory: {parquet_dir}")
     os.makedirs(parquet_dir, exist_ok=True)
 
-    writer = SummaryWriter(f"{parquet_dir}")
-    writer.add_text(
-        "hyperparameters",
-        "|param|value|\n|-|-|\n%s"
-        % ("\n".join([f"|{key}|{value}|" for key, value in vars(cfg).items()])),
-    )
+    # writer = SummaryWriter(f"{parquet_dir}")
+    # writer.add_text(
+    #     "hyperparameters",
+    #     "|param|value|\n|-|-|\n%s"
+    #     % ("\n".join([f"|{key}|{value}|" for key, value in vars(cfg).items()])),
+    # )
 
     env = gym.make(
         "MiniGrid-SaltAndPepper-v0-custom",
@@ -934,9 +971,11 @@ def main(cfg):
         nonstationary_path_decay_chance=cfg.nonstationary_path_decay_chance,
         nonstationary_visitations_before_path_appearance=cfg.nonstationary_visitations_before_path_appearance,
         nonstationary_steps_before_path_visible=cfg.nonstationary_steps_before_path_visible,
+        nonstationary_max_path_count=cfg.nonstationary_max_path_count,
         nonstationary_only_optimal=cfg.nonstationary_only_optimal,
         max_steps=cfg.max_steps,
         tile_size=cfg.tile_size,
+        path_width=cfg.path_width,
     )
 
     env = gym.wrappers.RecordEpisodeStatistics(env)
@@ -947,7 +986,7 @@ def main(cfg):
             env,
             f"videos/{parquet_dir}",
             step_trigger=lambda x: x % 10000 == 0,
-            video_length=100,
+            video_length=1000,
         )
     env.action_space.seed(cfg.seed)
     image_shape = env.observation_space["image"].shape
@@ -1021,13 +1060,13 @@ def main(cfg):
             agent,
             env,
             total_timesteps=cfg.training.total_timesteps,
-            writer=writer,
+            # writer=writer,
             parquet_dir=parquet_dir,
             cfg=cfg,
         )
 
     env.close()
-    writer.close()
+    # writer.close()
 
     end_time = time.time()
     total_time = end_time - start_time
