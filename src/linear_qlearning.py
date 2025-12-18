@@ -739,9 +739,9 @@ def train(
             )
             log_metric(metrics_dict, "charts/episode_count", episode_count, global_step)
 
-            print(
-                f"Episode {episode_count} - Episode Length: {episode_steps} - Overall Total Reward: {sum(episode_rewards)} - Total Reward: {total_reward}, Episode Steps: {episode_steps}, Global Step: {global_step}, Avg Reward/Global Step: {avg_reward_per_global_step:.4f}"
-            )
+            # print(
+            #     f"Episode {episode_count} - Episode Length: {episode_steps} - Overall Total Reward: {sum(episode_rewards)} - Total Reward: {total_reward}, Episode Steps: {episode_steps}, Global Step: {global_step}, Avg Reward/Global Step: {avg_reward_per_global_step:.4f}"
+            # )
 
             total_reward = 0
             episode_steps = 0
