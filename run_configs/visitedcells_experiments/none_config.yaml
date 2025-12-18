@@ -1,0 +1,18 @@
+training.step_size:
+  - 4e-4
+  - 8e-4
+  - 2e-3
+  - 4e-3
+  - 8e-3
+  - 2e-2
+  - 4e-2
+
+training.agent_pixel_view_edge_dim:
+  - 24
+  - 20
+  - 16
+  - 8
+  - 4
+
+path_mode:
+  - NONE

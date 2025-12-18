@@ -15,6 +15,7 @@ import numpy as np
 from typing import Any, SupportsFloat
 
 from enum import IntEnum, StrEnum
+from collections import Counter
 
 
 TILE_PIXELS = 8
@@ -428,7 +429,14 @@ class DirectionlessGrid(Grid):
 
         return img
 
-    def slice(self, topX: int, topY: int, width: int, height: int) -> Grid:
+    def slice(
+        self,
+        topX: int,
+        topY: int,
+        width: int,
+        height: int,
+        tile_size: int = TILE_PIXELS,
+    ) -> Grid:
         """
         Get a subset of the grid
         """
@@ -447,16 +455,16 @@ class DirectionlessGrid(Grid):
         local_path_pixels = set()
         for global_px, global_py in self.path_pixels:
             # Convert global pixel coordinates to tile coordinates
-            tile_x = global_px // TILE_PIXELS
-            tile_y = global_py // TILE_PIXELS
+            tile_x = global_px // tile_size
+            tile_y = global_py // tile_size
 
             # Check if this tile is within the slice bounds
             if topX <= tile_x < topX + width and topY <= tile_y < topY + height:
                 # Convert to local pixel coordinates within the slice
                 local_tile_x = tile_x - topX
                 local_tile_y = tile_y - topY
-                local_px = local_tile_x * TILE_PIXELS + (global_px % TILE_PIXELS)
-                local_py = local_tile_y * TILE_PIXELS + (global_py % TILE_PIXELS)
+                local_px = local_tile_x * tile_size + (global_px % tile_size)
+                local_py = local_tile_y * tile_size + (global_py % tile_size)
                 local_path_pixels.add((local_px, local_py))
 
         grid = DirectionlessGrid(
@@ -558,6 +566,12 @@ class SaltAndPepper(MiniGridEnv):
         nonstationary_path_decay_pixels: int = 720,
         nonstationary_path_inclusion_pixels: int = 16,
         nonstationary_path_decay_chance: float = 0.25,
+        nonstationary_visitations_before_path_appearance: int = 1,
+        nonstationary_steps_before_path_visible: int = 40000,
+        nonstationary_only_optimal: bool = False,
+        nonstationary_max_path_count: int = 1,
+        tile_size: int = TILE_PIXELS,
+        path_width: int = 3,
         **kwargs,
     ):
         self.seed = kwargs.pop("seed", None)
@@ -569,7 +583,16 @@ class SaltAndPepper(MiniGridEnv):
         self.nonstationary_path_decay_pixels = nonstationary_path_decay_pixels
         self.nonstationary_path_inclusion_pixels = nonstationary_path_inclusion_pixels
         self.nonstationary_path_decay_chance = nonstationary_path_decay_chance
-
+        self.nonstationary_visitations_before_path_appearance = (
+            nonstationary_visitations_before_path_appearance
+        )
+        self.nonstationary_steps_before_path_visible = (
+            nonstationary_steps_before_path_visible
+        )
+        self.nonstationary_only_optimal = nonstationary_only_optimal
+        self.nonstationary_max_path_count = nonstationary_max_path_count
+        self.tile_size = tile_size
+        self.path_width = path_width
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
@@ -589,7 +612,7 @@ class SaltAndPepper(MiniGridEnv):
             max_steps=max_steps,
             agent_pov=True,
             agent_view_size=agent_view_size,
-            tile_size=TILE_PIXELS,
+            tile_size=tile_size,
             **kwargs,
         )
         self.show_grid_lines = show_grid_lines
@@ -598,12 +621,13 @@ class SaltAndPepper(MiniGridEnv):
         self.show_landmarks = show_landmarks
         self.path_mode = PathMode[path_mode]
         self.actions = Actions
+        self.global_step_count = 0
         image_observation_space = gym.spaces.Box(
             low=0,
             high=255,
             shape=(
-                self.agent_view_size * TILE_PIXELS,
-                self.agent_view_size * TILE_PIXELS,
+                self.agent_view_size * tile_size,
+                self.agent_view_size * tile_size,
                 1,
             ),
             dtype="uint8",
@@ -623,7 +647,7 @@ class SaltAndPepper(MiniGridEnv):
             }
         )
 
-        self.tile_size = TILE_PIXELS
+        # self.tile_size = TILE_PIXELS
         self.size = size
         (
             self.unique_tiles,
@@ -635,15 +659,14 @@ class SaltAndPepper(MiniGridEnv):
         self.cell_visitation_indices_stack = []
         self.max_visitation_count = 1000000
         self.segments_in_visitation_path = 25
-        self.path = set([])
+        self.path = Counter()
         self.possible_pixels = [
             tuple(coord.tolist())
             for coord in np.array(
-                np.meshgrid(
-                    np.arange(TILE_PIXELS * size), np.arange(TILE_PIXELS * size)
-                )
+                np.meshgrid(np.arange(tile_size * size), np.arange(tile_size * size))
             ).T.reshape(-1, 2)
         ]
+        self.shortest_path = set(shortest_path.to_pixel_list())
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         self.num_episodes += 1
@@ -676,7 +699,7 @@ class SaltAndPepper(MiniGridEnv):
         # Generate all unique random black and white pixels for all cells at once
         # Calculate section size (8x8 pixels)
         # section_size = 1
-        num_sections_per_tile = TILE_PIXELS
+        num_sections_per_tile = 8
 
         # Generate random black/white sections for all cells
         # Each section will be either all black (0,0,0) or all white (255,255,255)
@@ -692,9 +715,53 @@ class SaltAndPepper(MiniGridEnv):
             ),
             p=[0.10, 0.90],
         )
+        if self.tile_size > 8:
+            corner_size = num_sections_per_tile // 2
+
+            sections = np.reshape(
+                section_colors,
+                shape=(
+                    self.size + pad_width * 2,
+                    self.size + pad_width * 2,
+                    corner_size,
+                    corner_size,
+                    4,
+                ),
+            )
+            full_grid = np.full(
+                (
+                    self.size + pad_width * 2,
+                    self.size + pad_width * 2,
+                    self.tile_size,
+                    self.tile_size,
+                ),
+                255,
+            )
+
+            full_grid[:, :, 0:corner_size, 0:corner_size] = sections[:, :, :, :, 0]
+            full_grid[
+                :,
+                :,
+                0:corner_size,
+                self.tile_size - corner_size : self.tile_size,
+            ] = sections[:, :, :, :, 1]
+            full_grid[
+                :,
+                :,
+                self.tile_size - corner_size : self.tile_size,
+                0:corner_size,
+            ] = sections[:, :, :, :, 2]
+            full_grid[
+                :,
+                :,
+                self.tile_size - corner_size : self.tile_size,
+                self.tile_size - corner_size : self.tile_size,
+            ] = sections[:, :, :, :, 3]
+        else:
+            full_grid = section_colors
 
         # Expand to 3 channels - all channels get the same value
-        padded_tiles = np.stack([section_colors] * 3, axis=-1)
+        padded_tiles = np.stack([full_grid] * 3, axis=-1)
 
         # Expand sections to full tile size
         # expanded_tiles = np.repeat(
@@ -768,19 +835,30 @@ class SaltAndPepper(MiniGridEnv):
         self.mission = "get to the green goal square"
 
         if self.path_mode == PathMode.SHORTEST_PATH:
-            self.path = shortest_path.to_pixel_list()
+            self.path = Counter(shortest_path.to_pixel_list())
         elif self.path_mode == PathMode.SLIGHTLY_SUBOPTIMAL_PATH:
-            self.path = slightly_suboptimal_path.to_pixel_list()
+            self.path = Counter(slightly_suboptimal_path.to_pixel_list())
         elif self.path_mode == PathMode.SUBOPTIMAL_PATH:
-            self.path = moderately_suboptimal_path.to_pixel_list()
+            self.path = Counter(moderately_suboptimal_path.to_pixel_list())
         elif self.path_mode == PathMode.MISLEADING_PATH:
-            self.path = misleading_path.to_pixel_list()
+            self.path = Counter(misleading_path.to_pixel_list())
         elif self.path_mode == PathMode.RANDOM_PATH:
-            self.path = random_path.to_pixel_list()
+            self.path = Counter(random_path.to_pixel_list())
 
         # Update grid with path pixels
         if self.show_optimal_path:  # and not self.path_mode == PathMode.VISITED_CELLS:
-            self.grid.path_pixels = self.path
+            if self.path_mode == PathMode.VISITED_CELLS:
+                if (
+                    self.global_step_count
+                    > self.nonstationary_steps_before_path_visible
+                ):
+                    self.grid.path_pixels = {
+                        k
+                        for k, v in self.path.items()
+                        if v >= self.nonstationary_visitations_before_path_appearance
+                    }  # path pixel coords with count > 5
+            else:
+                self.grid.path_pixels = set(self.path.keys())
 
     def render_path_visualizations(self):
         """Render both full and partial views with path visualization"""
@@ -835,22 +913,42 @@ class SaltAndPepper(MiniGridEnv):
                 len(self.possible_pixels), ejection_subset_size, replace=False
             )
             ejection_pixels = [self.possible_pixels[i] for i in ejection_indices]
-            self.path -= set(ejection_pixels)
+            for pixel in ejection_pixels:
+                self.path[pixel] -= 1
+            self.path = +self.path  # Remove zero and negative counts
 
         # Determine the set of pixels from which to sample.
         (x, y) = agent_pos
+
+        path_width_on_side = self.path_width // 2
         if action == 0:  # left
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-TILE_PIXELS, 1)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                -self.tile_size, 0
+            )
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
         elif action == 1:  # up
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-TILE_PIXELS, 1)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                -self.tile_size, 0
+            )
         elif action == 2:  # right
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(0, TILE_PIXELS + 1)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                0, self.tile_size + 0
+            )
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
         elif action == 3:  # down
-            x_pix = (x * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(-1, 2)
-            y_pix = (y * TILE_PIXELS + TILE_PIXELS // 2) + np.arange(0, TILE_PIXELS + 1)
+            x_pix = (x * self.tile_size + self.tile_size // 2) + np.arange(
+                -path_width_on_side, path_width_on_side + 1
+            )
+            y_pix = (y * self.tile_size + self.tile_size // 2) + np.arange(
+                0, self.tile_size + 0
+            )
         else:
             print("error")
 
@@ -867,10 +965,22 @@ class SaltAndPepper(MiniGridEnv):
             for idx in path_idxs
         ]
 
-        self.path.update(path_list)
+        if self.nonstationary_only_optimal:
+            path_list = list(set(path_list) & self.shortest_path)
+
+        for pixel in path_list:
+            self.path[pixel] = min(
+                self.path[pixel] + 1, self.nonstationary_max_path_count
+            )
 
         # Assign the set of path pixels.
-        self.grid.path_pixels = self.path  # path pixel coords
+
+        if self.global_step_count > self.nonstationary_steps_before_path_visible:
+            self.grid.path_pixels = {
+                k
+                for k, v in self.path.items()
+                if v >= self.nonstationary_visitations_before_path_appearance
+            }  # path pixel coords with count > 5
 
     def gen_obs_grid(self, agent_view_size=None):
         """
@@ -884,7 +994,9 @@ class SaltAndPepper(MiniGridEnv):
 
         agent_view_size = agent_view_size or self.agent_view_size
 
-        grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
+        grid = self.grid.slice(
+            topX, topY, agent_view_size, agent_view_size, tile_size=self.tile_size
+        )
 
         # The path pixels are already properly transformed to local coordinates in the slice method
         # No additional processing needed here
@@ -910,7 +1022,7 @@ class SaltAndPepper(MiniGridEnv):
 
         # Encode the partially observable view into a numpy array
         image = grid.render(
-            TILE_PIXELS,
+            self.tile_size,
             agent_pos,
             self.agent_dir,
             highlight_mask=None,
@@ -985,7 +1097,7 @@ class SaltAndPepper(MiniGridEnv):
         self, action: ActType
     ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         self.step_count += 1
-
+        self.global_step_count += 1
         reward = 0
         terminated = False
         truncated = False
@@ -998,31 +1110,30 @@ class SaltAndPepper(MiniGridEnv):
             self.actions.backward: (0, 1),
         }
 
-        try:
-            if action.item() in action_deltas:
-                dx, dy = action_deltas[action.item()]
-                fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
-                fwd_cell = self.grid.get(*fwd_pos)
-                if fwd_cell is None or fwd_cell.can_overlap():
-                    if self.path_mode == PathMode.VISITED_CELLS:
-                        self.update_path(self.agent_pos, action.item(), self.step_count)
-                    self.agent_pos = tuple(fwd_pos)
+        if action.item() in action_deltas:
+            dx, dy = action_deltas[action.item()]
+            fwd_pos = np.array((self.agent_pos[0] + dx, self.agent_pos[1] + dy))
+            fwd_cell = self.grid.get(*fwd_pos)
+            if fwd_cell is None or fwd_cell.can_overlap():
+                if self.path_mode == PathMode.VISITED_CELLS:
+                    self.update_path(self.agent_pos, action.item(), self.step_count)
+                self.agent_pos = tuple(fwd_pos)
 
-                if fwd_cell is not None and fwd_cell.type == "goal":
-                    terminated = True
-                    reward = self._reward()
+            if fwd_cell is not None and fwd_cell.type == "goal":
+                terminated = True
+                reward = self._reward()
 
-            # Done action (not used by default)
-            elif action == self.actions.done:
-                pass
+        # Done action (not used by default)
+        elif action == self.actions.done:
+            pass
 
-            else:
-                raise ValueError(f"Unknown action: {action}")
-        except Exception as e:
-            print(e)
-            import pdb
+        else:
+            raise ValueError(f"Unknown action: {action}")
+        # except Exception as e:
+        #     print(e)
+        #     import pdb
 
-            pdb.set_trace()
+        #     pdb.set_trace()
 
         if self.step_count >= self.max_steps:
             truncated = True
