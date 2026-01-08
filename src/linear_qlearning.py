@@ -369,6 +369,9 @@ def write_parquet_metrics(
     nonstationary_steps_before_path_visible,
     nonstationary_only_optimal,
     nonstationary_max_path_count,
+    start_epsilon,
+    end_epsilon,
+    exploration_fraction,
     part_number=0,
 ):
     """Write all log_metric entries as a time-series Parquet part file.
@@ -409,6 +412,9 @@ def write_parquet_metrics(
                 "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
                 "nonstationary_only_optimal": nonstationary_only_optimal,
                 "nonstationary_max_path_count": nonstationary_max_path_count,
+                "start_epsilon": start_epsilon,
+                "end_epsilon": end_epsilon,
+                "exploration_fraction": exploration_fraction,
             }
         )
 
@@ -435,6 +441,9 @@ def write_parquet_metrics(
                 "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
                 "nonstationary_only_optimal": nonstationary_only_optimal,
                 "nonstationary_max_path_count": nonstationary_max_path_count,
+                "start_epsilon": start_epsilon,
+                "end_epsilon": end_epsilon,
+                "exploration_fraction": exploration_fraction,
             }
         )
 
@@ -460,6 +469,9 @@ def write_parquet_metrics(
                     "nonstationary_steps_before_path_visible": nonstationary_steps_before_path_visible,
                     "nonstationary_only_optimal": nonstationary_only_optimal,
                     "nonstationary_max_path_count": nonstationary_max_path_count,
+                    "start_epsilon": start_epsilon,
+                    "end_epsilon": end_epsilon,
+                    "exploration_fraction": exploration_fraction,
                 }
             )
 
@@ -774,6 +786,9 @@ def train(
                 nonstationary_steps_before_path_visible=cfg.nonstationary_steps_before_path_visible,
                 nonstationary_only_optimal=cfg.nonstationary_only_optimal,
                 nonstationary_max_path_count=cfg.nonstationary_max_path_count,
+                start_epsilon=cfg.training.start_epsilon,
+                end_epsilon=cfg.training.end_epsilon,
+                exploration_fraction=cfg.training.exploration_fraction,
             )
             # Clear memory after writing
             metrics_dict = {"data": []}
@@ -800,6 +815,9 @@ def train(
         nonstationary_steps_before_path_visible=cfg.nonstationary_steps_before_path_visible,
         nonstationary_only_optimal=cfg.nonstationary_only_optimal,
         nonstationary_max_path_count=cfg.nonstationary_max_path_count,
+        start_epsilon=cfg.training.start_epsilon,
+        end_epsilon=cfg.training.end_epsilon,
+        exploration_fraction=cfg.training.exploration_fraction,
     )
 
 
