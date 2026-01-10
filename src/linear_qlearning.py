@@ -11,6 +11,9 @@ import time
 import uuid
 import json
 import numpy as np
+import uuid
+import hashlib
+import json
 
 # from tensorboardX import SummaryWriter
 from tqdm import tqdm
@@ -961,6 +964,22 @@ def main(cfg):
                 f"nonstationary_path_inclusion_pixels_{nonstationary_path_inclusion_pixels}",
             ]
         )
+    # Generate a deterministic UUID based on all config params except seed
+
+    def config_to_deterministic_id(cfg):
+        # Convert config to a dict and remove seed
+        cfg_dict = dict(cfg) if isinstance(cfg, dict) else vars(cfg)
+        cfg_dict_no_seed = {
+            k: v for k, v in cfg_dict["_content"].items() if k != "seed"
+        }
+        # Serialize with sorted keys to ensure determinism
+        config_str = json.dumps(cfg_dict_no_seed, sort_keys=True, default=str)
+        # Hash to get an 8-char id
+        hash_val = hashlib.sha256(config_str.encode()).hexdigest()[:8]
+        return hash_val
+
+    unique_id = config_to_deterministic_id(cfg)
+    path_components.append(f"uid_{unique_id}")
 
     path_components.append(f"seed_{cfg.seed}")
     parquet_dir = os.path.join(*path_components)
