@@ -33,3 +33,4 @@ training.exploration_fraction:
   - 0.10
   - 0.25
   - 0.5
+training.start_epsilon: 1.0
