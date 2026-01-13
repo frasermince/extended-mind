@@ -1,0 +1,34 @@
+training.step_size:
+  - 4e-4
+  - 8e-4
+  - 2e-3
+  - 4e-3
+  - 8e-3
+  - 2e-2
+  - 4e-2
+
+training.agent_pixel_view_edge_dim:
+  - 24
+  - 20
+  - 16
+  - 8
+  - 4
+
+path_mode:
+  - SHORTEST_PATH
+
+nonstationary_path_decay_pixels:
+  - 300
+nonstationary_path_decay_chance:
+  - .25
+nonstationary_path_inclusion_pixels:
+  - 8
+path_width: 1
+
+training.end_epsilon:
+  - 0.01
+  - 0.05
+training.exploration_fraction:
+  - 0.10
+  - 0.25
+  - 0.5
