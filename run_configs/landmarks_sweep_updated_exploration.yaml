@@ -1,0 +1,27 @@
+
+training.step_size:
+  - 4e-4
+  - 8e-4
+  - 2e-3
+  - 4e-3
+  - 8e-3
+  - 2e-2
+  - 4e-2
+
+
+path_mode:
+  - NONE
+
+show_landmarks: true
+training.agent_pixel_view_edge_dim:
+  - 24
+  - 20
+  - 16
+  - 8
+  - 4
+
+training.end_epsilon:
+  - 0.01
+training.exploration_fraction:
+  - 0.5
+training.start_epsilon: .1
