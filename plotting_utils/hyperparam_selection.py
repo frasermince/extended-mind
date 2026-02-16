@@ -507,11 +507,388 @@ def aggregate_runs_linear_duckdb(
                 gc.collect()  # Force garbage collection after each batch
 
 
+def aggregate_runs_linear_exploration_duckdb(
+    outputs_root: str,
+    jsonl_path: str,
+    *,
+    recursive_glob: str = "**/*.parquet",
+    step_subsample: int = 10,
+    extra_where: str | None = None,
+    start_from_combo: int = 0,  # Skip to this combo index (0-based) for debugging
+):
+    """Aggregate Parquet logs with DuckDB, grouping by exploration parameters.
+
+    Similar to aggregate_runs_linear_duckdb but also groups by exploration params
+    (start_epsilon, end_epsilon, exploration_fraction) without grouping by
+    nonstationary parameters.
+
+    Processes one learning rate at a time to reduce memory usage.
+
+    Returns a pandas DataFrame with one row per
+    (agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode,
+     start_epsilon, end_epsilon, exploration_fraction) containing:
+      - average_rewards_mean_subsampled: list[float] (subsampled mean per step)
+      - average_rewards_standard_error_subsampled: list[float] (subsampled SEM per step)
+      - total_rewards_mean: float (mean total reward across seeds)
+      - total_rewards_standard_error: float (SEM of total reward)
+      - total_rewards_individual_seeds: list[float]
+      - learning_rate_str: str (stable string for labeling)
+    """
+    try:
+        duckdb = __import__("duckdb")
+    except Exception as exc:
+        raise RuntimeError("duckdb is required: pip install duckdb") from exc
+
+    # Build a safe parquet glob for DuckDB
+    base = outputs_root.rstrip("/")
+    base_escaped = base.replace("'", "''")
+    glob_path = f"{base_escaped}/{recursive_glob}"
+
+    where_extra_sql = f" AND ({extra_where})" if extra_where else ""
+
+    # First, get unique (learning_rate, agent_pixel_view_edge_dim) combinations
+    con = duckdb.connect()
+    con.execute("SET preserve_insertion_order = false")
+
+    print(
+        "Discovering unique (learning_rate, agent_pixel_view_edge_dim) combinations..."
+    )
+    combo_query = f"""
+        SELECT DISTINCT 
+            CAST(step_size AS DOUBLE) AS learning_rate,
+            CAST(agent_pixel_view_edge_dim AS INTEGER) AS agent_pixel_view_edge_dim
+        FROM read_parquet('{glob_path}')
+        WHERE metric = 'reward_per_timestep'{where_extra_sql}
+        ORDER BY learning_rate, agent_pixel_view_edge_dim
+    """
+    combos = con.execute(combo_query).fetchall()
+    print(f"Found {len(combos)} unique (lr, dim) combinations")
+    con.close()
+
+    import json
+    import gc
+    import time
+
+    def print_memory():
+        """Print current memory usage (if psutil available)."""
+        try:
+            import psutil
+
+            process = psutil.Process()
+            mem = process.memory_info().rss / 1024 / 1024 / 1024  # GB
+            print(f"  [Memory: {mem:.2f} GB]", flush=True)
+        except ImportError:
+            print("  [Memory: psutil not installed]", flush=True)
+
+    # Use a permanent JSONL file in the project directory for resumability
+    if not jsonl_path:
+        jsonl_path = os.path.join(
+            os.path.dirname(__file__),
+            "linear_exploration_aggregation_progress.jsonl",
+        )
+    print(f"Using results file: {jsonl_path}")
+
+    # Load already-processed combinations from existing file
+    # Use regex to extract keys WITHOUT parsing full JSON (saves massive memory)
+    import re
+
+    lr_pattern = re.compile(r'"learning_rate":\s*([0-9.eE+-]+)')
+    dim_pattern = re.compile(r'"agent_pixel_view_edge_dim":\s*(\d+)')
+
+    processed_combos = set()
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    lr_match = lr_pattern.search(line)
+                    dim_match = dim_pattern.search(line)
+                    if lr_match and dim_match:
+                        lr = float(lr_match.group(1))
+                        dim = int(dim_match.group(1))
+                        processed_combos.add((lr, dim))
+                except (ValueError, AttributeError):
+                    pass  # Skip malformed lines
+        print(f"Found {len(processed_combos)} already-processed combinations")
+        gc.collect()  # Free any memory from file reading
+        print_memory()
+
+    # Open in append mode so we don't lose previous progress
+    total_rows = len(processed_combos) * 125  # Approximate rows from prior runs
+
+    # Force cleanup before starting the main loop
+    print("Cleaning up before main loop...")
+    gc.collect()
+    time.sleep(1)
+    print_memory()
+
+    with open(jsonl_path, "a", encoding="utf-8") as jsonl_file:
+        for combo_idx, (lr, dim) in enumerate(combos):
+            # Debug: skip to specific combo if requested
+            if combo_idx < start_from_combo:
+                print(f"\nDebug skip {combo_idx + 1}/{len(combos)}: lr={lr}, dim={dim}")
+                continue
+
+            # Skip if already processed
+            if (lr, dim) in processed_combos:
+                print(
+                    f"\nSkipping {combo_idx + 1}/{len(combos)}: lr={lr}, dim={dim} (already done)"
+                )
+                continue
+
+            # Extra cleanup before processing - important after skipping many combos
+            print(
+                f"\n--- Starting combo {combo_idx + 1}/{len(combos)}: lr={lr}, dim={dim} ---",
+                flush=True,
+            )
+            gc.collect()
+            print_memory()
+            print(f"Processing...", flush=True)
+
+            # Query for this (lr, dim) combination with exploration parameters
+            query = f"""
+        WITH base AS (
+            SELECT
+                CAST(agent_pixel_view_edge_dim AS INTEGER) AS agent_pixel_view_edge_dim,
+                CAST(step_size AS DOUBLE) AS learning_rate,
+                COALESCE(CAST(optimal_path_available AS BOOLEAN), FALSE) AS optimal_path,
+                CAST(path_mode AS TEXT) AS path_mode,
+                CAST(start_epsilon AS DOUBLE) AS start_epsilon,
+                CAST(end_epsilon AS DOUBLE) AS end_epsilon,
+                CAST(exploration_fraction AS DOUBLE) AS exploration_fraction,
+                CAST(seed AS INTEGER) AS seed,
+                CAST(step AS BIGINT) AS step,
+                CAST(value AS DOUBLE) AS value
+            FROM read_parquet('{glob_path}')
+                WHERE metric = 'reward_per_timestep'
+                  AND CAST(step_size AS DOUBLE) = {lr}
+                  AND CAST(agent_pixel_view_edge_dim AS INTEGER) = {dim}
+                  {where_extra_sql}
+        ),
+        per_seed_auc AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, seed, start_epsilon, end_epsilon, exploration_fraction,
+                SUM(value) AS auc
+            FROM base
+                GROUP BY 1,2,3,4,5,6,7,8
+        ),
+        per_seed_cum AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, seed, step, start_epsilon, end_epsilon, exploration_fraction,
+                AVG(value) OVER (
+                    PARTITION BY agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, seed, start_epsilon, end_epsilon, exploration_fraction
+                    ORDER BY step
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS cum_avg
+            FROM base
+        ),
+        -- Subsampled per-seed cumulative averages for per-seed curves
+        per_seed_cum_sub AS (
+            SELECT * FROM per_seed_cum
+            WHERE MOD(step, {int(step_subsample)}) = 0
+        ),
+        curves AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, step, start_epsilon, end_epsilon, exploration_fraction,
+                AVG(cum_avg) AS mean_curve,
+                STDDEV_SAMP(cum_avg) / NULLIF(SQRT(COUNT(*)), 0) AS sem_curve
+            FROM per_seed_cum
+            GROUP BY 1,2,3,4,5,6,7,8
+        ),
+        curves_sub AS (
+            SELECT * FROM curves
+            WHERE MOD(step, {int(step_subsample)}) = 0
+        ),
+        per_seed_curve_arrays AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, seed, start_epsilon, end_epsilon, exploration_fraction,
+                array_agg(cum_avg ORDER BY step) AS per_seed_curve
+            FROM per_seed_cum_sub
+            GROUP BY 1,2,3,4,5,6,7,8
+        ),
+        per_seed_curve_matrix AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, start_epsilon, end_epsilon, exploration_fraction,
+                array_agg(per_seed_curve ORDER BY seed) AS average_reward_curve
+            FROM per_seed_curve_arrays
+            GROUP BY 1,2,3,4,5,6,7
+        ),
+        curve_arrays AS (
+            SELECT
+                agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, start_epsilon, end_epsilon, exploration_fraction,
+                array_agg(mean_curve ORDER BY step) AS average_rewards_mean_subsampled,
+                array_agg(sem_curve ORDER BY step) AS average_rewards_standard_error_subsampled,
+                array_agg(mean_curve ORDER BY step) AS average_reward_curve_standard_error_base_mean,
+                array_agg(sem_curve ORDER BY step) AS average_reward_curve_standard_error
+            FROM curves_sub
+            GROUP BY 1,2,3,4,5,6,7
+        ),
+        auc_group AS (
+            SELECT
+                    agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, start_epsilon, end_epsilon, exploration_fraction,
+                AVG(auc) AS total_rewards_mean,
+                STDDEV_SAMP(auc) / NULLIF(SQRT(COUNT(*)), 0) AS total_rewards_standard_error,
+                array_agg(auc ORDER BY seed) AS total_rewards_individual_seeds
+            FROM per_seed_auc
+                GROUP BY 1,2,3,4,5,6,7
+        )
+        SELECT
+            ca.agent_pixel_view_edge_dim,
+            ca.learning_rate,
+            printf('%.6g', ca.learning_rate) AS learning_rate_str,
+            ca.optimal_path,
+            ca.path_mode,
+            ca.start_epsilon,
+            ca.end_epsilon,
+            ca.exploration_fraction,
+            ca.average_rewards_mean_subsampled,
+            ca.average_rewards_standard_error_subsampled,
+            a.total_rewards_mean,
+            a.total_rewards_standard_error,
+            a.total_rewards_individual_seeds,
+            pcm.average_reward_curve,
+            ca.average_reward_curve_standard_error
+        FROM curve_arrays ca
+            JOIN auc_group a USING (agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, start_epsilon, end_epsilon, exploration_fraction)
+            JOIN per_seed_curve_matrix pcm USING (agent_pixel_view_edge_dim, learning_rate, optimal_path, path_mode, start_epsilon, end_epsilon, exploration_fraction)
+                ORDER BY 1,2,4,5,6,7,8
+            """
+
+            # Force GC and cleanup before starting a new query
+            gc.collect()
+            time.sleep(2)  # Give OS time to reclaim memory
+
+            # Clean up DuckDB temp files from previous iterations
+            duckdb_temp = "/tmp/duckdb_temp"
+            if os.path.exists(duckdb_temp):
+                import shutil
+
+                shutil.rmtree(duckdb_temp, ignore_errors=True)
+            os.makedirs(duckdb_temp, exist_ok=True)
+
+            con = duckdb.connect()
+            con.execute("SET preserve_insertion_order = false")
+            con.execute("SET threads = 1")  # Single thread to minimize memory
+            con.execute(
+                "SET memory_limit = '24GB'"
+            )  # Conservative - force early disk spill
+            con.execute("SET temp_directory = '/tmp/duckdb_temp'")
+            con.execute("SET max_temp_directory_size = '150GB'")
+            con.execute("PRAGMA enable_progress_bar")
+            con.execute("PRAGMA enable_progress_bar_print = true")
+
+            # Custom JSON encoder to handle numpy types
+            class NumpyEncoder(json.JSONEncoder):
+                def default(self, obj):
+                    if hasattr(obj, "tolist"):  # handles ndarray and matrix
+                        return obj.tolist()
+                    if hasattr(obj, "item"):  # handles numpy scalars
+                        return obj.item()
+                    return super().default(obj)
+
+            def _transform_to_plotting_format(row_dict, outputs_root):
+                """Transform DuckDB output to plotting format."""
+
+                # Convert arrays to Python lists
+                def _to_float_list(seq):
+                    if seq is None:
+                        return None
+                    if isinstance(seq, list):
+                        return [float(x) for x in seq]
+                    return [float(x) for x in list(seq)]
+
+                def _to_2d_float_list(list_of_seq):
+                    if list_of_seq is None:
+                        return None
+                    outer = (
+                        list_of_seq
+                        if isinstance(list_of_seq, list)
+                        else list(list_of_seq)
+                    )
+                    return [
+                        [
+                            float(v)
+                            for v in (
+                                list(inner) if isinstance(inner, list) else list(inner)
+                            )
+                        ]
+                        for inner in outer
+                    ]
+
+                edge_dim = int(row_dict["agent_pixel_view_edge_dim"])
+                lr_str = str(row_dict["learning_rate_str"])
+                optimal_path = bool(row_dict["optimal_path"])
+                start_epsilon = float(row_dict["start_epsilon"])
+                end_epsilon = float(row_dict["end_epsilon"])
+                exploration_fraction = float(row_dict["exploration_fraction"])
+
+                # Compose run_key compatible with downstream parsers
+                run_key = (
+                    f"{outputs_root}/learning_rate_{lr_str}/"
+                    f"agent_pixel_view_edge_dim_{edge_dim}/"
+                    f"start_epsilon_{start_epsilon}/end_epsilon_{end_epsilon}/exploration_fraction_{exploration_fraction}"
+                )
+                if optimal_path:
+                    run_key += "/optimal_path"
+
+                return {
+                    "run_key": run_key,
+                    "edge_dim": edge_dim,
+                    "agent_pixel_view_edge_dim": edge_dim,
+                    "learning_rate": float(row_dict["learning_rate"]),
+                    "learning_rate_str": lr_str,
+                    "optimal_path": optimal_path,
+                    "start_epsilon": start_epsilon,
+                    "end_epsilon": end_epsilon,
+                    "exploration_fraction": exploration_fraction,
+                    # Back-compat keys sourced from new names
+                    "average_reward_area_under_curve": float(
+                        row_dict["total_rewards_mean"]
+                    ),
+                    "average_reward_curve": _to_2d_float_list(
+                        row_dict["average_reward_curve"]
+                    ),
+                    "average_reward_curve_standard_error": _to_float_list(
+                        row_dict["average_reward_curve_standard_error"]
+                    ),
+                    "per_seed_aucs": _to_float_list(
+                        row_dict["total_rewards_individual_seeds"]
+                    ),
+                    "per_seed_auc_standard_error": float(
+                        row_dict["total_rewards_standard_error"]
+                    ),
+                    "average_reward_mean": _to_float_list(
+                        row_dict["average_rewards_mean_subsampled"]
+                    ),
+                }
+
+            try:
+                batch_df = con.execute(query).df()
+                # Write each row to JSONL immediately in plotting format (saves memory)
+                for _, row in batch_df.iterrows():
+                    row_dict = row.to_dict()
+                    # Transform to plotting format
+                    plotting_dict = _transform_to_plotting_format(
+                        row_dict, outputs_root
+                    )
+                    jsonl_file.write(json.dumps(plotting_dict, cls=NumpyEncoder) + "\n")
+                jsonl_file.flush()
+                total_rows += len(batch_df)
+                print(f"  Got {len(batch_df)} rows (total: {total_rows})")
+                del batch_df  # Free memory immediately
+            except Exception as e:
+                print(f"  Error processing lr={lr}, dim={dim}: {e}")
+            finally:
+                con.close()
+                del con  # Explicitly delete connection
+                gc.collect()  # Force garbage collection after each batch
+
+
 def aggregate_runs_linear_nonstationary_duckdb(
     outputs_root: str,
     *,
     recursive_glob: str = "**/*.parquet",
     step_subsample: int = 10,
+    jsonl_path: str,
     extra_where: str | None = None,
     start_from_combo: int = 0,  # Skip to this combo index (0-based) for debugging
 ):
@@ -578,9 +955,6 @@ def aggregate_runs_linear_nonstationary_duckdb(
             print("  [Memory: psutil not installed]", flush=True)
 
     # Use a permanent JSONL file in the project directory for resumability
-    jsonl_path = os.path.join(
-        os.path.dirname(__file__), "../larger_grid_runs_test_aggregation_progress.jsonl"
-    )
     print(f"Using results file: {jsonl_path}")
 
     # Load already-processed combinations from existing file
@@ -656,6 +1030,9 @@ def aggregate_runs_linear_nonstationary_duckdb(
                 CAST(regexp_extract(filename, 'nonstationary_path_decay_pixels_(\\d+)', 1) AS INTEGER) AS nonstationary_path_decay_pixels,
                 CAST(regexp_extract(filename, 'nonstationary_path_decay_chance_([0-9.]+)', 1) AS DOUBLE) AS nonstationary_path_decay_chance,
                 CAST(regexp_extract(filename, 'nonstationary_path_inclusion_pixels_(\\d+)', 1) AS INTEGER) AS nonstationary_path_inclusion_pixels,
+                CAST(start_epsilon AS DOUBLE) AS start_epsilon,
+                CAST(end_epsilon AS DOUBLE) AS end_epsilon,
+                CAST(exploration_fraction AS DOUBLE) AS exploration_fraction,
                 CAST(step_size AS DOUBLE) AS learning_rate,
                 COALESCE(CAST(optimal_path_available AS BOOLEAN), FALSE) AS optimal_path,
                 CAST(seed AS INTEGER) AS seed,
@@ -670,16 +1047,16 @@ def aggregate_runs_linear_nonstationary_duckdb(
         ),
         per_seed_auc AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed, start_epsilon, end_epsilon, exploration_fraction,
                 SUM(value) AS auc
             FROM base
-                GROUP BY 1,2,3,4,5,6,7
+                GROUP BY 1,2,3,4,5,6,7,8,9,10
         ),
         per_seed_cum AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed, step,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed, step, start_epsilon, end_epsilon, exploration_fraction,
                 AVG(value) OVER (
-                    PARTITION BY agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed
+                    PARTITION BY agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed, start_epsilon, end_epsilon, exploration_fraction
                     ORDER BY step
                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
                 ) AS cum_avg
@@ -692,11 +1069,11 @@ def aggregate_runs_linear_nonstationary_duckdb(
         ),
         curves AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, step,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, step, start_epsilon, end_epsilon, exploration_fraction,
                 AVG(cum_avg) AS mean_curve,
                 STDDEV_SAMP(cum_avg) / NULLIF(SQRT(COUNT(*)), 0) AS sem_curve
             FROM per_seed_cum
-            GROUP BY 1,2,3,4,5,6,7
+            GROUP BY 1,2,3,4,5,6,7,8,9,10
         ),
         curves_sub AS (
             SELECT * FROM curves
@@ -704,36 +1081,36 @@ def aggregate_runs_linear_nonstationary_duckdb(
         ),
         per_seed_curve_arrays AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, seed, start_epsilon, end_epsilon, exploration_fraction,
                 array_agg(cum_avg ORDER BY step) AS per_seed_curve
             FROM per_seed_cum_sub
-            GROUP BY 1,2,3,4,5,6,7
+            GROUP BY 1,2,3,4,5,6,7,8,9,10
         ),
         per_seed_curve_matrix AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, start_epsilon, end_epsilon, exploration_fraction,
                 array_agg(per_seed_curve ORDER BY seed) AS average_reward_curve
             FROM per_seed_curve_arrays
-            GROUP BY 1,2,3,4,5,6
+            GROUP BY 1,2,3,4,5,6,7,8,9
         ),
         curve_arrays AS (
             SELECT
-                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path,
+                agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, start_epsilon, end_epsilon, exploration_fraction,
                 array_agg(mean_curve ORDER BY step) AS average_rewards_mean_subsampled,
                 array_agg(sem_curve ORDER BY step) AS average_rewards_standard_error_subsampled,
                 array_agg(mean_curve ORDER BY step) AS average_reward_curve_standard_error_base_mean,
                 array_agg(sem_curve ORDER BY step) AS average_reward_curve_standard_error
             FROM curves_sub
-            GROUP BY 1,2,3,4,5,6
+            GROUP BY 1,2,3,4,5,6,7,8,9
         ),
         auc_group AS (
             SELECT
-                    agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path,
+                    agent_pixel_view_edge_dim, nonstationary_path_decay_pixels, nonstationary_path_decay_chance, nonstationary_path_inclusion_pixels, learning_rate, optimal_path, start_epsilon, end_epsilon, exploration_fraction,
                 AVG(auc) AS total_rewards_mean,
                 STDDEV_SAMP(auc) / NULLIF(SQRT(COUNT(*)), 0) AS total_rewards_standard_error,
                 array_agg(auc ORDER BY seed) AS total_rewards_individual_seeds
             FROM per_seed_auc
-                GROUP BY 1,2,3,4,5,6
+                GROUP BY 1,2,3,4,5,6,7,8,9
         )
         SELECT
                 ca.agent_pixel_view_edge_dim,
@@ -1253,21 +1630,72 @@ if __name__ == "__main__":
                     #     step_subsample=10,
                     # )
                     # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_landmarks_2/agent_name_linear_qlearning/path_mode_LANDMARKS"
-                    outputs_name = "seasonal_grid_runs_test"
-                    outputs_root = f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/agent_name_linear_qlearning/path_mode_NONE"
+                    output_path = "path_mode_LANDMARKS"
+                    outputs_name = (
+                        # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
+                        "landmarks_sweep_updated_exploration_feb_13"
+                    )
+                    outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
                     aggregate_runs_linear_duckdb(
                         outputs_root=outputs_root,
-                        jsonl_path=f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/{outputs_name}_PATH_MODE_NONE_aggregation_progress.jsonl",
+                        jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
                         recursive_glob="**/*.parquet",
                         step_subsample=10,
                     )
-                    outputs_root = f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/agent_name_linear_qlearning/path_mode_VISITED_CELLS"
-                    aggregate_runs_linear_duckdb(
-                        outputs_root=outputs_root,
-                        jsonl_path=f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
-                        recursive_glob="**/*.parquet",
-                        step_subsample=10,
-                    )
+                    path_modes = [
+                        "SHORTEST_PATH",
+                        "NONE",
+                        "SUBOPTIMAL_PATH",
+                        "MISLEADING_PATH",
+                        "RANDOM_PATH",
+                    ]
+                    # for path_mode in path_modes:
+                    #     output_path = f"path_mode_{path_mode}"
+                    #     outputs_name = (
+                    #         # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
+                    #         "linear_paths_feb_9"
+                    #     )
+                    #     outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
+                    #     aggregate_runs_linear_duckdb(
+                    #         outputs_root=outputs_root,
+                    #         jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
+                    #         recursive_glob="**/*.parquet",
+                    #         step_subsample=10,
+                    #     )
+                    # output_path = "path_mode_NONE"
+                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/agent_name_linear_qlearning/{output_path}"
+                    # aggregate_runs_linear_exploration_duckdb(
+                    #     outputs_root=outputs_root,
+                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
+                    #     recursive_glob="**/*.parquet",
+                    #     step_subsample=10,
+                    # )
+                    # outputs_name = (
+                    #     "parquet_runs_linear_visited_cells_skinny_paths_counter"
+                    # )
+                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
+                    # aggregate_runs_linear_nonstationary_duckdb(
+                    #     outputs_root=outputs_root,
+                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
+                    #     recursive_glob="**/*.parquet",
+                    #     step_subsample=10,
+                    # )
+                    # outputs_name = "parquet_runs_linear_visited_cells_skinny_paths"
+                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
+                    # aggregate_runs_linear_nonstationary_duckdb(
+                    #     outputs_root=outputs_root,
+                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
+                    #     recursive_glob="**/*.parquet",
+                    #     step_subsample=10,
+                    # )
+                    # outputs_name = "parquet_runs_linear_visited_cells_seasonal"
+                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
+                    # aggregate_runs_linear_duckdb(
+                    #     outputs_root=outputs_root,
+                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
+                    #     recursive_glob="**/*.parquet",
+                    #     step_subsample=10,
+                    # )
                     # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SHORTEST_PATH_nov19_linear/path_mode_SHORTEST_PATH"
                     # aggregate_runs_linear_duckdb(
                     #     outputs_root=outputs_root,

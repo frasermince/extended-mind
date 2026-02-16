@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -118,6 +118,9 @@ def _process_row(row: Dict) -> Dict:
         "per_seed_aucs": per_seed_auc_val,
         "per_seed_auc_standard_error": per_seed_auc_standard_error_val,
         "path_mode": path_mode,
+        "start_epsilon": row.get("start_epsilon", None),
+        "end_epsilon": row.get("end_epsilon", None),
+        "exploration_fraction": row.get("exploration_fraction", None),
     }
 
 
@@ -478,6 +481,7 @@ def _plot_config_stats(
     config_stats: pd.DataFrame,
     path_label: str,
     output_path: str,
+    make_config_label_fn: Callable[[Any], str],
     color: str,
 ) -> None:
     """Plot reward and diff metrics per config as separate bar charts.
@@ -492,7 +496,7 @@ def _plot_config_stats(
     # Sort by max_reward for max plot (descending)
     config_stats_max = config_stats.sort_values("max_reward", ascending=False)
     config_labels_max = [
-        _make_config_label(row) for _, row in config_stats_max.iterrows()
+        make_config_label_fn(row) for _, row in config_stats_max.iterrows()
     ]
 
     # Plot 1: max_reward per config
@@ -536,7 +540,7 @@ def _plot_config_stats(
     # Sort by mean_reward for mean plot (descending)
     config_stats_mean = config_stats.sort_values("mean_reward", ascending=False)
     config_labels_mean = [
-        _make_config_label(row) for _, row in config_stats_mean.iterrows()
+        make_config_label_fn(row) for _, row in config_stats_mean.iterrows()
     ]
 
     # Plot 2: mean_reward per config
@@ -582,7 +586,7 @@ def _plot_config_stats(
         # Sort by max_diff for max diff plot (descending)
         config_stats_max_diff = config_stats.sort_values("max_diff", ascending=False)
         config_labels_max_diff = [
-            _make_config_label(row) for _, row in config_stats_max_diff.iterrows()
+            make_config_label_fn(row) for _, row in config_stats_max_diff.iterrows()
         ]
 
         # Plot 3: max_diff per config
@@ -631,7 +635,7 @@ def _plot_config_stats(
         # Sort by mean_diff for mean diff plot (descending)
         config_stats_mean_diff = config_stats.sort_values("mean_diff", ascending=False)
         config_labels_mean_diff = [
-            _make_config_label(row) for _, row in config_stats_mean_diff.iterrows()
+            make_config_label_fn(row) for _, row in config_stats_mean_diff.iterrows()
         ]
 
         # Plot 4: mean_diff per config
@@ -685,8 +689,11 @@ def _prepare_data_for_plotting(
     output_path: str,
     agg: str = "max_reward",
     color: str = COLORS[1],
+    config_cols: List[str] = ["decay_pixels", "decay_chance", "inclusion_pixels"],
+    suffix_formatter: Optional[Callable[[Any], str]] = None,
+    make_config_label_fn: Optional[Callable[[Any], str]] = None,
     is_nonstationary: bool = True,
-) -> Tuple[pd.DataFrame, Optional[str]]:
+) -> Tuple[pd.DataFrame, Optional[str], Tuple[Any, ...]]:
     """Prepare DataFrame for plotting by selecting best config (if nonstationary) or using all data (if pathless).
 
     Args:
@@ -703,16 +710,28 @@ def _prepare_data_for_plotting(
         Tuple of (filtered DataFrame ready for plotting, title suffix string or None)
     """
     # Step 1: For each (config, edge_dim), find best step size
-    config_cols = ["decay_pixels", "decay_chance", "inclusion_pixels"]
+    # config_cols = ["decay_pixels", "decay_chance", "inclusion_pixels"]
     config_and_capacity = config_cols + ["edge_dim"]
     idx = df.groupby(config_and_capacity)[metric].idxmax()
     best_rows = df.loc[idx].copy()
 
     # Calculate pathless baseline per edge_dim (best learning rate for each capacity)
     pathless_idx = pathless_df.groupby(GROUP_COLS)[metric].idxmax()
-    pathless_best = pathless_df.loc[pathless_idx].set_index("edge_dim")[metric]
+    pathless_best = pathless_df.loc[pathless_idx].set_index(GROUP_COLS)[metric]
 
     # Add diff column: nonstationary - pathless for each row
+    # Now, the baseline maps need to match not just edge_dim, but also the exploration params
+    # We'll create a MultiIndex using the config_cols + ["edge_dim"] in pathless_best for mapping
+    # For each row in best_rows, get the corresponding pathless value by config and edge_dim
+    def get_baseline(row):
+        # Build the key based on the full set of config_and_capacity columns, supporting mapping to pathless_best index
+        key = tuple(row[col] for col in config_and_capacity)
+        try:
+            return pathless_best.loc[key]
+        except KeyError:
+            return np.nan
+
+    # best_rows["pathless_baseline"] =
     best_rows["pathless_baseline"] = best_rows["edge_dim"].map(pathless_best)
     best_rows["diff_from_pathless"] = best_rows[metric] - best_rows["pathless_baseline"]
 
@@ -728,16 +747,15 @@ def _prepare_data_for_plotting(
     config_stats = config_stats.reset_index()
 
     # Create plots for max_reward and mean_reward per config
-    _plot_config_stats(config_stats, path_label, output_path, color)
+    _plot_config_stats(
+        config_stats, path_label, output_path, make_config_label_fn, color
+    )
 
     # Step 3: Find winning config (argmax_M) using mean_N
     winning_config_idx = config_stats[agg].idxmax()
+
     winning_config = config_stats.loc[winning_config_idx]
-    winning_config_vals = (
-        winning_config["decay_pixels"],
-        winning_config["decay_chance"],
-        winning_config["inclusion_pixels"],
-    )
+    winning_config_vals = tuple(winning_config[col] for col in config_cols)
 
     # Step 4: Filter to winning config only
     mask = pd.Series(True, index=df.index)
@@ -746,10 +764,13 @@ def _prepare_data_for_plotting(
     df_filtered = df[mask]
 
     # Create title suffix for this path
-    decay, chance, incl = winning_config_vals
-    title_suffix = f"{path_label}: decay={decay}, chance={chance:.3f}, incl={incl}"
+    if not suffix_formatter:
+        decay, chance, incl = winning_config_vals
+        title_suffix = f"{path_label}: decay={decay}, chance={chance:.3f}, incl={incl}"
+    else:
+        title_suffix = suffix_formatter(winning_config_vals)
 
-    return df_filtered, title_suffix
+    return df_filtered, title_suffix, winning_config_vals
 
 
 def _plot_grouped_bars_path_vs_pathless_by_capacity(
@@ -793,6 +814,48 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     capacities_per_path = []  # Store capacities for each path
 
     # learning_rate 0.02, edge_dim 20, decay_pixels 600, decay_chance: 0.01, inclusion_pixels: 22, seed: 14
+    # Do this for the first three paths: pathless, path_varied_exploration, path_fixed_exploration — do it manually (no loop) for debugging.
+
+    # Pathless
+    # pathless_df = paths[0][1]
+    # idx_capacity_pathless = pathless_df.groupby(GROUP_COLS)[metric].idxmax()
+    # best_rows_capacity_pathless = pathless_df.loc[idx_capacity_pathless]
+    # stats_pathless = best_rows_capacity_pathless.groupby(GROUP_COLS).agg(
+    #     mean=(metric, np.mean),
+    #     sem=((f"{error_metric}", "first")),
+    #     count=(metric, "count"),
+    #     max=(metric, np.max),
+    #     argmax=(metric, np.argmax),
+    # )
+
+    # # Path Varied Exploration
+    # path_varied_exploration_df = paths[1][1]
+    # idx_capacity_varied = path_varied_exploration_df.groupby(GROUP_COLS)[
+    #     metric
+    # ].idxmax()
+    # best_rows_capacity_varied = path_varied_exploration_df.loc[idx_capacity_varied]
+    # stats_varied = best_rows_capacity_varied.groupby(GROUP_COLS).agg(
+    #     mean=(metric, np.mean),
+    #     sem=((f"{error_metric}", "first")),
+    #     count=(metric, "count"),
+    #     max=(metric, np.max),
+    #     argmax=(metric, np.argmax),
+    # )
+
+    # # Path Fixed Exploration
+    # path_fixed_exploration_df = paths[2][1]
+    # idx_capacity_fixed = path_fixed_exploration_df.groupby(GROUP_COLS)[metric].idxmax()
+    # best_rows_capacity_fixed = path_fixed_exploration_df.loc[idx_capacity_fixed]
+    # stats_fixed = best_rows_capacity_fixed.groupby(GROUP_COLS).agg(
+    #     mean=(metric, np.mean),
+    #     sem=((f"{error_metric}", "first")),
+    #     count=(metric, "count"),
+    #     max=(metric, np.max),
+    #     argmax=(metric, np.argmax),
+    # )
+    # import pdb
+
+    # pdb.set_trace()
 
     for i, (path_label, df) in enumerate(paths):
         # df is already pre-filtered/prepared, just need to aggregate stats
@@ -806,6 +869,7 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
             max=(metric, np.max),
             argmax=(metric, np.argmax),
         )
+
         stats = stats.reset_index()
         stats = stats.sort_values(GROUP_COLS)  # type: ignore[call-arg]
 
@@ -933,10 +997,10 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     ax.tick_params(axis="both", which="minor", labelsize=24)
     ax.set_xlabel(xlabel, fontsize=26)
 
-    yticks = np.linspace(0, 9000, 5)
+    yticks = np.linspace(0, 10000, 5)
     ax.set_yticks(yticks)
     ax.set_yticklabels([int(t) for t in yticks])
-    ax.set_ylim(0, 9000)
+    ax.set_ylim(0, 10000)
     ax.set_ylabel(ylabel, fontsize=26)
     if is_nonstationary:
         # Move the title up by using the Figure instead of Axes
@@ -965,7 +1029,7 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
         fontsize=22,
         title_fontsize=20,
         ncols=1,
-        bbox_to_anchor=(0, 1.40) if len(paths) > 2 else (0, 1.05),
+        bbox_to_anchor=(0, 1.50) if len(paths) > 2 else (0, 1.05),
         frameon=False,
     )
     if len(labels_leg) > 2:
@@ -976,7 +1040,7 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
             fontsize=22,
             title_fontsize=20,
             ncols=1,
-            bbox_to_anchor=(0.75, 1.40),
+            bbox_to_anchor=(0.75, 1.50),
             frameon=False,
         )
     ax.add_artist(legend1)
@@ -1337,78 +1401,343 @@ def _generate_latex_pvals_table(
         print(f"Error writing to file {output_path}: {e}")
 
 
-def nonstationary_local_test():
-    outputs_name = "seasonal_grid_runs_test"
-    outdir = f"nonstationary_local_test_plots_{outputs_name}"
-    # misleading_path = "misleading_path_results.json"
-    # path_and_no_path = "path_and_no_path_results.json"
-    # visited_cells = "visited_paths.json"
-    # suboptimal_path = "suboptimal_results.json"
-    # random_path = "random_path_results.json"
-    # landmarks = "landmarks_path_results.json"
-    # landmarks_grey = "landmarks_grey_results.json"
-    # landmarks_black = "landmarks_black_results.json"
-    # landmarks_extra = "landmarks_extra_results.json"
-    # pathless_linear = f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/{outputs_name}_PATH_MODE_NONE_aggregation_progress.jsonl"
-    pathless_linear = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_pathless_aggregation_progress.jsonl"
-    nonstationary_linear = f"/Users/frasermince/Programming/hidden_llava/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl"
+# def nonstationary_main():
+#     outdir = "nonstationary_plots"
+#     # misleading_path = "misleading_path_results.json"
+#     # path_and_no_path = "path_and_no_path_results.json"
+#     # visited_cells = "visited_paths.json"
+#     # suboptimal_path = "suboptimal_results.json"
+#     # random_path = "random_path_results.json"
+#     # landmarks = "landmarks_path_results.json"
+#     # landmarks_grey = "landmarks_grey_results.json"
+#     # landmarks_black = "landmarks_black_results.json"
+#     # landmarks_extra = "landmarks_extra_results.json"
+#     nonstationary_linear = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_env_sweep_v2_aggregation_progress.jsonl"
+#     pathless_linear = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_pathless_aggregation_progress.jsonl"
 
-    nonstationary_linear_df = load_results(nonstationary_linear)
-    pathless_linear_df = load_results(pathless_linear)
+#     nonstationary_linear_df = load_results(nonstationary_linear)
+#     pathless_linear_df = load_results(pathless_linear)
 
-    shared_colors = _build_pair_color_map(pathless_linear_df)
+#     shared_colors = _build_pair_color_map(pathless_linear_df)
 
-    # Raw paths before preparation
-    raw_paths = [
-        (
-            "Non Stationary",
-            nonstationary_linear_df,
-            True,
-        ),  # (label, df, is_nonstationary)
-        # ("Pathless Linear", pathless_linear_df, False),
-    ]
+#     # Raw paths before preparation
+#     raw_paths = [
+#         (
+#             "Non Stationary",
+#             nonstationary_linear_df,
+#             True,
+#         ),  # (label, df, is_nonstationary)
+#         # ("Pathless Linear", pathless_linear_df, False),
+#     ]
 
-    # Prepare data for plotting
-    output_path = os.path.join(outdir, "total_reward")
-    metric = "average_reward_area_under_curve"
+#     # Prepare data for plotting
+#     output_path = os.path.join(outdir, "total_reward")
+#     metric = "average_reward_area_under_curve"
+#     filtered_nonstationary_df_01 = nonstationary_linear_df[
+#         nonstationary_linear_df["decay_chance"] == 0.01
+#     ]
+#     filtered_nonstationary_df_03 = nonstationary_linear_df[
+#         nonstationary_linear_df["decay_chance"] == 0.03
+#     ]
+#     path_tuples = [
+#         ("Pathless", pathless_linear_df),
+#         ("Non Stationary 0.01", filtered_nonstationary_df_01),
+#         ("Non Stationary 0.03", filtered_nonstationary_df_03),
+#     ]
 
-    prepared_paths = [
-        ("Pathless", pathless_linear_df),
-        ("Non Stationary", nonstationary_linear_df),
-    ]
+#     import pdb
 
-    _plot_grouped_bars_path_vs_pathless_by_capacity(
-        paths=prepared_paths,
-        metric=metric,
-        dot_metric="per_seed_aucs",
-        error_metric="per_seed_auc_standard_error",
-        title="",
-        xlabel="Capacity",
-        ylabel="Total Reward",
-        output_path=f"{output_path}",
-        # title_suffix=title_suffix,
-        agg="max",
-        show_sample_dots=True,
-        is_nonstationary=True,
+#     pdb.set_trace()
+#     _plot_grouped_bars_path_vs_pathless_by_capacity(
+#         paths=path_tuples,
+#         metric="average_reward_area_under_curve",
+#         dot_metric="per_seed_aucs",
+#         error_metric="per_seed_auc_standard_error",
+#         sample_dot_size=50,
+#         title="",
+#         xlabel="Capacity",
+#         ylabel="Total Reward",
+#         output_path=os.path.join(
+#             outdir,
+#             "capacity_total_reward",
+#         ),
+#         agg="max",
+#         show_sample_dots=True,
+#     )
+#     print("AFTER")
+
+#     title_suffixes = []
+#     aggs = [
+#         "max_reward",
+#         "mean_reward",
+#         "sum_reward",
+#         "max_diff",
+#         "mean_diff",
+#         "sum_diff",
+#     ]
+#     for agg in aggs:
+#         prepared_paths = [("Pathless", pathless_linear_df)]
+#         df_prepared, title_suffix = _prepare_data_for_plotting(
+#             df=nonstationary_linear_df,
+#             path_label="Non Stationary",
+#             metric=metric,
+#             pathless_df=pathless_linear_df,
+#             output_path=output_path,
+#             agg=agg,
+#             color=COLORS[1],
+#             is_nonstationary=True,
+#         )
+#         prepared_paths.append(("Non Stationary " + agg, df_prepared))
+
+#         _plot_grouped_bars_path_vs_pathless_by_capacity(
+#             paths=prepared_paths,
+#             metric=metric,
+#             dot_metric="per_seed_aucs",
+#             error_metric="per_seed_auc_standard_error",
+#             title="",
+#             xlabel="Capacity",
+#             ylabel="Total Reward",
+#             output_path=f"{output_path}_{agg}",
+#             title_suffix=title_suffix,
+#             agg="max",
+#             show_sample_dots=True,
+#             is_nonstationary=True,
+#         )
+
+#         paths = [(f"{agg} {title_suffix}", df_prepared)]
+#         _plot_side_by_side_path_vs_pathless(
+#             paths=paths,
+#             metric="average_reward_area_under_curve",
+#             title=f"{title_suffix} Avg Reward AUC across Learning Rates",
+#             ylabel="Total Reward",
+#             shared_colors=shared_colors,
+#             output_path=os.path.join(
+#                 outdir,
+#                 f"sweeps/sweeps_{agg}",
+#             ),
+#         )
+
+
+# def nonstationary_experiments_main():
+#     outdir = "nonstationary_experiments_plots"
+
+#     # Use explicit variable names for each path mode according to file_context_1
+#     def get_results(outputs_name: str, path_mode: str):
+#         return f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_{path_mode}_aggregation_progress.jsonl"
+
+#     no_path = get_results("parquet_runs_linear_visited_cells_none_config", "NONE")
+#     # only_optimal = get_results(
+#     #     "parquet_runs_linear_visited_cells_only_optimal", "VISITED_CELLS"
+#     # )
+#     # seasonal = get_results(
+#     #     "parquet_runs_linear_visited_cells_seasonal", "VISITED_CELLS"
+#     # )
+#     # skinny_paths_counter = get_results(
+#     #     "parquet_runs_linear_visited_cells_skinny_paths_counter", "VISITED_CELLS"
+#     # )
+#     skinny_paths = get_results(
+#         "parquet_runs_linear_visited_cells_skinny_paths", "VISITED_CELLS"
+#     )
+
+#     outputs_name = "skinny_path_maximized"
+#     nonstationary_local_test_path = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/local/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl"
+
+#     no_path_df = load_results(no_path)
+#     # only_optimal_df = load_results(only_optimal)
+#     # seasonal_df = load_results(seasonal)
+#     # skinny_paths_counter_df = load_results(skinny_paths_counter)
+#     skinny_paths_df = load_results(skinny_paths)
+#     nonstationary_local_test_df = load_results(nonstationary_local_test_path)
+#     # seasonal_df_15 = seasonal_df[seasonal_df["decay_chance"] == 0.15]
+#     # seasonal_df_25 = seasonal_df[seasonal_df["decay_chance"] == 0.25]
+#     # skinny_paths_counter_df_25 = skinny_paths_counter_df[
+#     #     skinny_paths_counter_df["decay_chance"] == 0.25
+#     # ]
+#     # skinny_paths_counter_df_15 = skinny_paths_counter_df[
+#     #     skinny_paths_counter_df["decay_chance"] == 0.15
+#     # ]
+#     skinny_paths = get_results(
+#         "parquet_runs_linear_visited_cells_skinny_paths", "VISITED_CELLS"
+#     )
+#     skinny_paths_df_25 = skinny_paths_df[skinny_paths_df["decay_chance"] == 0.25]
+#     # skinny_paths_df_15 = skinny_paths_df[skinny_paths_df["decay_chance"] == 0.15]
+
+#     # just_only_optimal = [("Only Optimal", only_optimal_df)]
+#     # just_seasonal_15 = [("Seasonal 0.15", seasonal_df_15)]
+#     # just_seasonal_25 = [("Seasonal 0.25", seasonal_df_25)]
+#     # just_skinny_paths_counter_15 = [
+#     #     ("Skinny Paths Counter 0.15", skinny_paths_counter_df_15)
+#     # ]
+#     # just_skinny_paths_counter_25 = [
+#     #     ("Skinny Paths Counter 0.25", skinny_paths_counter_df_25)
+#     # ]
+#     # just_skinny_paths_15 = [("Skinny Paths 0.15", skinny_paths_df_15)]
+#     just_no_path = [("No Path", no_path_df)]
+#     just_skinny_paths_25 = [("Dynamic", skinny_paths_df_25)]
+#     just_nonstationary_local_test = [
+#         ("Non Stationary Local Test", nonstationary_local_test_df)
+#     ]
+#     path_tuples = [
+#         ("No Path", no_path_df),
+#         # ("Only Optimal", only_optimal_df),
+#         # # ("Seasonal 0.15", seasonal_df_15),
+#         # ("Seasonal", seasonal_df_25),
+#         # ("Skinny Paths Counter 0.15", skinny_paths_counter_df_15),
+#         # ("Skinny Paths Counter", skinny_paths_counter_df_25),
+#         # ("Skinny Paths 0.15", skinny_paths_df_15),
+#         ("Dynamic", skinny_paths_df_25),
+#         ("Skinny More Decay", nonstationary_local_test_df),
+#     ]
+
+#     path_variants = [
+#         # just_only_optimal,
+#         # just_seasonal_15,
+#         # just_seasonal_25,
+#         # just_skinny_paths_counter_15,
+#         # just_skinny_paths_counter_25,
+#         # just_skinny_paths_15,
+#         just_no_path,
+#         just_skinny_paths_25,
+#         just_nonstationary_local_test,
+#     ]
+
+#     shared_colors = _build_pair_color_map(no_path_df)
+#     for paths in path_variants:
+#         _plot_best_auc_reward_curves_side_by_side(
+#             paths=paths,
+#             title_base="Avg Reward Curve at Best AUC LR",
+#             ylabel="Average Reward",
+#             shared_colors=shared_colors,
+#             output_path=os.path.join(
+#                 outdir,
+#                 f"average_reward_{paths[0][0]}",
+#             ),
+#         )
+#         print(os.path.join(outdir, f"average_reward_{paths[0][0]}"))
+
+#     # _plot_grouped_bars_path_vs_pathless_by_capacity(
+#     #     paths=path_tuples_no_path_optimal,
+#     #     metric="average_reward_area_under_curve",
+#     #     dot_metric="per_seed_aucs",
+#     #     error_metric="per_seed_auc_standard_error",
+#     #     sample_dot_size=50,
+#     #     title="",
+#     #     xlabel="Capacity",
+#     #     ylabel="Total Reward",
+#     #     output_path=os.path.join(
+#     #         outdir,
+#     #         "total_reward_pathless_path",
+#     #     ),
+#     #     agg="max",
+#     #     show_sample_dots=True,
+#     # )
+#     _plot_grouped_bars_path_vs_pathless_by_capacity(
+#         paths=path_tuples,
+#         metric="average_reward_area_under_curve",
+#         dot_metric="per_seed_aucs",
+#         error_metric="per_seed_auc_standard_error",
+#         sample_dot_size=50,
+#         title="",
+#         xlabel="Capacity",
+#         ylabel="Total Reward",
+#         output_path=os.path.join(
+#             outdir,
+#             "total_reward_all_paths",
+#         ),
+#         agg="max",
+#         show_sample_dots=True,
+#     )
+#     for paths in path_variants:
+#         _plot_side_by_side_path_vs_pathless(
+#             paths=paths,
+#             metric="average_reward_area_under_curve",
+#             title="Avg Reward AUC across Learning Rates",
+#             ylabel="Total Reward",
+#             shared_colors=shared_colors,
+#             output_path=os.path.join(
+#                 outdir,
+#                 f"sweeps_{paths[0][0]}",
+#             ),
+#         )
+
+#     p_val_experiments = [
+#         # ("Only Optimal", only_optimal_df),
+#         # ("Seasonal 0.15", seasonal_df_15),
+#         # ("Seasonal 0.25", seasonal_df_25),
+#         # ("Skinny Paths Counter 0.15", skinny_paths_counter_df_15),
+#         # ("Skinny Paths Counter 0.25", skinny_paths_counter_df_25),
+#         # ("Skinny Paths 0.15", skinny_paths_df_15),
+#         ("Dynamic", skinny_paths_df_25),
+#         ("Skinny More Decay", nonstationary_local_test_df),
+#     ]
+#     for path_label, path_variant_df in p_val_experiments:
+#         _plot_pvals(
+#             pathless_df=no_path_df,
+#             path_df=path_variant_df,
+#             metric="average_reward_area_under_curve",
+#             dot_metric="per_seed_aucs",
+#             error_metric="per_seed_auc_standard_error",
+#             title="",
+#             xlabel="Capacity",
+#             ylabel="Total Reward",
+#             path_label=path_label,
+#             output_path=os.path.join(
+#                 outdir,
+#                 f"{path_label}_pvals",
+#             ),
+#             agg="max",
+#             show_sample_dots=True,
+#         )
+#     # p_val_experiments = [
+#     #     ("Only Optimal", only_optimal_df),
+#     #     ("Seasonal 0.15", seasonal_df_15),
+#     #     ("Seasonal 0.25", seasonal_df_25),
+#     #     ("Skinny Paths Counter 0.15", skinny_paths_counter_df_15),
+#     #     ("Skinny Paths Counter 0.25", skinny_paths_counter_df_25),
+#     #     # ("Skinny Paths 0.15", skinny_paths_df_15),
+#     #     ("Skinny Paths 0.25", skinny_paths_df_25),
+#     # ]
+#     _generate_latex_pvals_table(
+#         pathless_df=no_path_df,
+#         path_experiments=p_val_experiments,
+#         metric="average_reward_area_under_curve",
+#         dot_metric="per_seed_aucs",
+#         error_metric="per_seed_auc_standard_error",
+#         title="",
+#         xlabel="Capacity",
+#         ylabel="Total Reward",
+#         output_path=os.path.join(
+#             outdir + "/tables",
+#             "all_paths_table.tex",
+#         ),
+#     )
+
+
+# This is our main nonstationary processing code.
+def nonstationary_exploration_main():
+    outdir = "nonstationary_exploration_plots_jan_19"
+
+    def get_results(outputs_name: str, path_mode: str):
+        return f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_{path_mode}_aggregation_progress.jsonl"
+
+    no_path = get_results(
+        "parquet_runs_visited_cells_more_exploration_experiments_configv2_jan_19",
+        "NONE",
     )
-
-    # paths = [(f"{agg} {title_suffix}", df_prepared)]
-    for path_label, path_df in prepared_paths:
-        _plot_side_by_side_path_vs_pathless(
-            paths=[(path_label, path_df)],
-            metric="average_reward_area_under_curve",
-            title=f"Avg Reward AUC across Learning Rates",
-            ylabel="Total Reward",
-            shared_colors=shared_colors,
-            output_path=os.path.join(
-                outdir,
-                f"sweeps/sweeps",
-            ),
-        )
-
-
-def nonstationary_main():
-    outdir = "nonstationary_plots"
+    # only_optimal = get_results(
+    #     "parquet_runs_linear_visited_cells_only_optimal", "VISITED_CELLS"
+    # )
+    # seasonal = get_results(
+    #     "parquet_runs_linear_visited_cells_seasonal", "VISITED_CELLS"
+    # )
+    # skinny_paths_counter = get_results(
+    #     "parquet_runs_linear_visited_cells_skinny_paths_counter", "VISITED_CELLS"
+    # )
+    nonstationary_exploration = get_results(
+        # "parquet_runs_linear_visited_cells_eps_schedule_v2_jan_12", "VISITED_CELLS"
+        "parquet_runs_visited_cells_more_exploration_experiments_configv2_jan_19",
+        "VISITED_CELLS",
+    )
     # misleading_path = "misleading_path_results.json"
     # path_and_no_path = "path_and_no_path_results.json"
     # visited_cells = "visited_paths.json"
@@ -1418,42 +1747,26 @@ def nonstationary_main():
     # landmarks_grey = "landmarks_grey_results.json"
     # landmarks_black = "landmarks_black_results.json"
     # landmarks_extra = "landmarks_extra_results.json"
-    nonstationary_linear = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_env_sweep_v2_aggregation_progress.jsonl"
-    pathless_linear = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_pathless_aggregation_progress.jsonl"
 
-    nonstationary_linear_df = load_results(nonstationary_linear)
-    pathless_linear_df = load_results(pathless_linear)
+    nonstationary_linear_df = load_results(nonstationary_exploration)
+    pathless_linear_df = load_results(no_path)
+    skinny_paths = get_results(
+        "parquet_runs_linear_visited_cells_skinny_paths", "VISITED_CELLS"
+    )
+    skinny_paths_df = load_results(skinny_paths)
+    skinny_paths_df_25 = skinny_paths_df[skinny_paths_df["decay_chance"] == 0.25]
 
     shared_colors = _build_pair_color_map(pathless_linear_df)
-
-    # Raw paths before preparation
-    raw_paths = [
-        (
-            "Non Stationary",
-            nonstationary_linear_df,
-            True,
-        ),  # (label, df, is_nonstationary)
-        # ("Pathless Linear", pathless_linear_df, False),
-    ]
 
     # Prepare data for plotting
     output_path = os.path.join(outdir, "total_reward")
     metric = "average_reward_area_under_curve"
-    filtered_nonstationary_df_01 = nonstationary_linear_df[
-        nonstationary_linear_df["decay_chance"] == 0.01
-    ]
-    filtered_nonstationary_df_03 = nonstationary_linear_df[
-        nonstationary_linear_df["decay_chance"] == 0.03
-    ]
+
     path_tuples = [
-        ("Pathless", pathless_linear_df),
-        ("Non Stationary 0.01", filtered_nonstationary_df_01),
-        ("Non Stationary 0.03", filtered_nonstationary_df_03),
+        ("No Path", pathless_linear_df),
+        ("Dynamic", nonstationary_linear_df),
     ]
 
-    import pdb
-
-    pdb.set_trace()
     _plot_grouped_bars_path_vs_pathless_by_capacity(
         paths=path_tuples,
         metric="average_reward_area_under_curve",
@@ -1470,6 +1783,62 @@ def nonstationary_main():
         agg="max",
         show_sample_dots=True,
     )
+    for paths in path_tuples:
+        _plot_side_by_side_path_vs_pathless(
+            paths=[(paths[0], paths[1])],
+            metric="average_reward_area_under_curve",
+            title="Avg Reward AUC across Learning Rates",
+            ylabel="Total Reward",
+            shared_colors=shared_colors,
+            output_path=os.path.join(
+                outdir,
+                f"sweeps/sweeps_{paths[0][0]}",
+            ),
+        )
+    p_val_experiments = [
+        ("Dynamic", nonstationary_linear_df),
+    ]
+    for path_label, path_variant_df in p_val_experiments:
+        _plot_pvals(
+            pathless_df=pathless_linear_df,
+            path_df=path_variant_df,
+            metric="average_reward_area_under_curve",
+            dot_metric="per_seed_aucs",
+            error_metric="per_seed_auc_standard_error",
+            title="",
+            xlabel="Capacity",
+            ylabel="Total Reward",
+            path_label=path_label,
+            output_path=os.path.join(
+                outdir,
+                f"{path_label}_pvals",
+            ),
+            agg="max",
+            show_sample_dots=True,
+        )
+    _plot_best_auc_reward_curves_side_by_side(
+        paths=[("Dynamic", nonstationary_linear_df)],
+        title_base="Avg Reward Curve at Best AUC LR",
+        ylabel="Average Reward",
+        shared_colors=shared_colors,
+        output_path=os.path.join(
+            outdir,
+            f"average_reward_dynamic",
+        ),
+    )
+    _plot_best_auc_reward_curves_side_by_side(
+        paths=[("No Path", pathless_linear_df)],
+        title_base="Avg Reward Curve at Best AUC LR",
+        ylabel="Average Reward",
+        shared_colors=shared_colors,
+        output_path=os.path.join(
+            outdir,
+            f"average_reward_dynamic_no_path",
+        ),
+    )
+    import pdb
+
+    pdb.set_trace()
     print("AFTER")
 
     title_suffixes = []
@@ -1482,18 +1851,31 @@ def nonstationary_main():
         "sum_diff",
     ]
     for agg in aggs:
-        prepared_paths = [("Pathless", pathless_linear_df)]
-        df_prepared, title_suffix = _prepare_data_for_plotting(
+        df_prepared, title_suffix, winning_config_vals = _prepare_data_for_plotting(
             df=nonstationary_linear_df,
             path_label="Non Stationary",
             metric=metric,
             pathless_df=pathless_linear_df,
             output_path=output_path,
             agg=agg,
+            config_cols=["start_epsilon", "end_epsilon", "exploration_fraction"],
             color=COLORS[1],
             is_nonstationary=True,
+            suffix_formatter=lambda x: f"start_epsilon={x[0]:.3f}, end_epsilon={x[1]:.3f}, exploration_fraction={x[2]:.3f}",
+            make_config_label_fn=lambda x: f"start_epsilon={x['start_epsilon']:.3f}, end_epsilon={x['end_epsilon']:.3f}, exploration_fraction={x['exploration_fraction']:.3f}",
         )
+
+        # Find the pathless runs matching the winning config values on the selected config columns
+        mask_pathless = pd.Series(True, index=pathless_linear_df.index)
+        for col, val in zip(
+            ["start_epsilon", "end_epsilon", "exploration_fraction"],
+            winning_config_vals,
+        ):
+            mask_pathless &= pathless_linear_df[col] == val
+        pathless_matching_df = pathless_linear_df[mask_pathless]
+        prepared_paths = [("Pathless", pathless_matching_df)]
         prepared_paths.append(("Non Stationary " + agg, df_prepared))
+        prepared_paths.append(("Skinny Paths " + agg, skinny_paths_df_25))
 
         _plot_grouped_bars_path_vs_pathless_by_capacity(
             paths=prepared_paths,
@@ -1528,19 +1910,19 @@ def all_paths_main():
     outdir = "linear_plots"
 
     # Use explicit variable names for each path mode according to file_context_1
-    no_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_pathless_aggregation_progress.jsonl"
-    misleading_path = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_MISLEADING_PATH_aggregation_progress.jsonl"
-    random_path = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_RANDOM_PATH_aggregation_progress.jsonl"
-    suboptimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SUBOPTIMAL_PATH_aggregation_progress.jsonl"
-    optimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SHORTEST_PATH_aggregation_progress.jsonl"
-    landmarks = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_LANDMARKS_aggregation_progress.jsonl"
+    no_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_paths_feb_9/linear_paths_feb_9_PATH_MODE_NONE_aggregation_progress.jsonl"
+    misleading_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_paths_feb_9/linear_paths_feb_9_PATH_MODE_MISLEADING_PATH_aggregation_progress.jsonl"
+    random_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_paths_feb_9/linear_paths_feb_9_PATH_MODE_RANDOM_PATH_aggregation_progress.jsonl"
+    suboptimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_paths_feb_9/linear_paths_feb_9_PATH_MODE_SUBOPTIMAL_PATH_aggregation_progress.jsonl"
+    optimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_paths_feb_9/linear_paths_feb_9_PATH_MODE_SHORTEST_PATH_aggregation_progress.jsonl"
+    landmarks_path = "/Users/frasermince/Programming/hidden_llava/current_processed/landmarks_sweep_updated_exploration_feb_13/landmarks_sweep_updated_exploration_feb_13_PATH_MODE_LANDMARKS_aggregation_progress.jsonl"
 
     misleading_path_df = load_results(misleading_path)
     random_path_df = load_results(random_path)
     suboptimal_path_df = load_results(suboptimal_path)
     optimal_path_df = load_results(optimal_path)
     no_path_df = load_results(no_path)
-    landmarks_df = load_results(landmarks)
+    landmarks_df = load_results(landmarks_path)
 
     just_optimal_path = [("Optimal Path", optimal_path_df)]
     just_no_path = [("No Path", no_path_df)]
@@ -1685,4 +2067,6 @@ if __name__ == "__main__":
 
     # nonstationary_main()
     # all_paths_main()
-    nonstationary_local_test()
+    # nonstationary_local_test()
+
+    all_paths_main()
