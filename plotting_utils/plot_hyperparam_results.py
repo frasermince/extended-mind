@@ -214,18 +214,16 @@ def _build_pair_color_map(
     return pair_to_color
 
 
-def _plot_side_by_side_path_vs_pathless(
+def _plot_step_size_sweep(
     paths: List[Tuple[str, pd.DataFrame]],
-    metric: str,
     shared_colors: Dict[Tuple[int, int], tuple],
-    title: str,  # kept for signature compatibility; ignored
     ylabel: str,
     output_path: str,
 ) -> None:
     """
-    Side-by-side plots: left=pathless, right=optimal_path, shared colors and
-    legend. Titles removed; legend in top-right of the Path Visible plot.
+    Plot total reward (AUC) across step sizes, one panel per group.
     """
+    metric = "average_reward_area_under_curve"
     for path_label, df in paths:
         if df.empty:
             return
@@ -315,36 +313,27 @@ def _plot_side_by_side_path_vs_pathless(
     # plt.show()
 
 
-def _plot_best_auc_reward_curves_side_by_side(
-    paths: List[Tuple[str, pd.DataFrame]],
-    title_base: str,
-    ylabel: str,
+def _plot_best_avg_reward_curves(
+    label: str,
+    df: pd.DataFrame,
     shared_colors: Dict[Tuple[int, int], tuple],
     output_path: str,
 ) -> None:
-    """Side-by-side panels (Path Not Visible vs Path Visible) of reward curves
-    where, for each (depth, width), we select the learning rate that maximizes
-    reward AUC within that panel.
+    """Plot reward curves by capacity, selecting the learning rate that maximizes
+    reward AUC for each (depth, width) group.
 
     Requires columns:
       - "average_reward_area_under_curve"
       - "average_reward_curve"
+      - "average_reward_curve_standard_error"
     """
-
-    for path_label, df in paths:
-        if df.empty:
-            return
-        if (
-            "average_reward_area_under_curve" not in df.columns
-            or "average_reward_curve" not in df.columns
-        ):
-            return
-
-    # df_path = df_all[df_all["optimal_path"] == True]  # noqa: E712
-    # df_pathless = df_all[df_all["optimal_path"] == False]  # noqa: E712
-
-    # if df_path.empty and df_pathless.empty:
-    #   return
+    if df.empty:
+        return
+    if (
+        "average_reward_area_under_curve" not in df.columns
+        or "average_reward_curve" not in df.columns
+    ):
+        return
 
     pair_to_color = shared_colors
 
@@ -433,48 +422,28 @@ def _plot_best_auc_reward_curves_side_by_side(
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    # Create figure and draw panels
-    fig, axes = plt.subplots(1, len(paths), figsize=(18, 6), squeeze=False)
+    fig, ax = plt.subplots(figsize=(18, 6))
+    _draw_panel(ax, df, label)
 
-    for i, (path_label, df) in enumerate(paths):
-        _draw_panel(axes[0, i], df, path_label)
+    ax.set_ylim(ax.get_ylim()[0], 0.05)
 
-    # Match y-limits for comparability
-    ymins: List[float] = []
-    ymaxs: List[float] = []
-    for ax in axes[0, :]:
-        if ax.get_visible():
-            ymin, ymax = ax.get_ylim()
-            ymins.append(ymin)
-            ymaxs.append(ymax)
-    if ymins and ymaxs:
-        # common_ylim = (min(ymins), max(ymaxs))
-        common_ylim = (min(ymins), 0.05)
-        for ax in axes[0, :]:
-            if ax.get_visible():
-                ax.set_ylim(*common_ylim)
-
-    # Legend inside the right plot with a descriptive title
-    ax_right = axes[0, -1]
-    if ax_right.get_visible():
-        handles, labels = ax_right.get_legend_handles_labels()
-        if handles and labels:
-            ax_right.legend(
-                title="Network Size",
-                fontsize=12,
-                title_fontsize=14,
-                loc="upper left",
-                frameon=False,
-            )
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(
+            title="Network Size",
+            fontsize=12,
+            title_fontsize=14,
+            loc="upper left",
+            frameon=False,
+        )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout(pad=1.5)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    # plt.show()
 
 
-def _plot_grouped_bars_path_vs_pathless_by_capacity(
+def _plot_total_reward_by_capacity(
     paths: List[Tuple[str, pd.DataFrame]],
     metric: str,
     dot_metric: Optional[str],
@@ -824,10 +793,9 @@ if __name__ == "__main__":
         # just_random_path,
         # just_landmarks,
     ]:
-        _plot_best_auc_reward_curves_side_by_side(
-            paths=paths,
-            title_base="Avg Reward Curve at Best AUC LR",
-            ylabel="Average Reward",
+        _plot_best_avg_reward_curves(
+            label=paths[0][0],
+            df=paths[0][1],
             shared_colors=shared_colors,
             output_path=os.path.join(
                 outdir,
@@ -835,10 +803,8 @@ if __name__ == "__main__":
             ),
         )
 
-        _plot_side_by_side_path_vs_pathless(
+        _plot_step_size_sweep(
             paths=paths,
-            metric="average_reward_area_under_curve",
-            title="Avg Reward AUC across Learning Rates",
             ylabel="Total Reward",
             shared_colors=shared_colors,
             output_path=os.path.join(
@@ -862,7 +828,7 @@ if __name__ == "__main__":
         ("Landmarks Black", landmarks_black_df),
         ("Landmarks Extra", landmarks_extra_df),
     ]
-    _plot_grouped_bars_path_vs_pathless_by_capacity(
+    _plot_total_reward_by_capacity(
         paths=paths,
         metric="average_reward_area_under_curve",
         dot_metric="per_seed_aucs",

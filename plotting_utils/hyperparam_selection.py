@@ -1630,38 +1630,28 @@ if __name__ == "__main__":
                     #     step_subsample=10,
                     # )
                     # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_landmarks_2/agent_name_linear_qlearning/path_mode_LANDMARKS"
-                    output_path = "path_mode_LANDMARKS"
-                    outputs_name = (
-                        # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
-                        "landmarks_sweep_updated_exploration_feb_13"
-                    )
-                    outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
-                    aggregate_runs_linear_duckdb(
-                        outputs_root=outputs_root,
-                        jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
-                        recursive_glob="**/*.parquet",
-                        step_subsample=10,
-                    )
                     path_modes = [
-                        "SHORTEST_PATH",
                         "NONE",
+                        "SHORTEST_PATH",
                         "SUBOPTIMAL_PATH",
                         "MISLEADING_PATH",
                         "RANDOM_PATH",
+                        "LANDMARKS",
+                        "VISITED_CELLS",
                     ]
-                    # for path_mode in path_modes:
-                    #     output_path = f"path_mode_{path_mode}"
-                    #     outputs_name = (
-                    #         # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
-                    #         "linear_paths_feb_9"
-                    #     )
-                    #     outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
-                    #     aggregate_runs_linear_duckdb(
-                    #         outputs_root=outputs_root,
-                    #         jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
-                    #         recursive_glob="**/*.parquet",
-                    #         step_subsample=10,
-                    #     )
+                    for path_mode in path_modes:
+                        output_path = f"path_mode_{path_mode}"
+                        outputs_name = (
+                            # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
+                            "all_edge_dims_linear_qlearning_odd_edge_dims_feb_27"
+                        )
+                        outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
+                        aggregate_runs_linear_duckdb(
+                            outputs_root=outputs_root,
+                            jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
+                            recursive_glob="**/*.parquet",
+                            step_subsample=10,
+                        )
                     # output_path = "path_mode_NONE"
                     # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/agent_name_linear_qlearning/{output_path}"
                     # aggregate_runs_linear_exploration_duckdb(
