@@ -7,6 +7,8 @@ training.step_size:
   - 2e-2
   - 4e-2
 
+path_mode:
+  - NONE
 
 show_landmarks: true
 
