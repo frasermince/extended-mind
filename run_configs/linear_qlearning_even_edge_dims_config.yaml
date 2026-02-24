@@ -1,0 +1,45 @@
+training.step_size:
+  - 4e-4
+  - 8e-4
+  - 2e-3
+  - 4e-3
+  - 8e-3
+  - 2e-2
+  - 4e-2
+
+
+path_mode:
+  - NONE
+  - SHORTEST_PATH
+  - SUBOPTIMAL_PATH
+  - MISLEADING_PATH
+  - RANDOM_PATH
+  - LANDMARKS
+  - VISITED_CELLS
+
+nonstationary_path_decay_pixels:
+  - 300
+nonstationary_path_decay_chance:
+  - .25
+nonstationary_path_inclusion_pixels:
+  - 8
+
+training.agent_pixel_view_edge_dim:
+  - 2
+  - 4
+  - 6
+  - 8
+  - 10
+  - 12
+  - 14
+  - 16
+  - 18
+  - 20
+  - 22
+  - 24
+
+training.end_epsilon:
+  - 0.01
+training.exploration_fraction:
+  - 0.5
+training.start_epsilon: .1

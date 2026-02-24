@@ -512,6 +512,7 @@ class PathMode(StrEnum):
     MISLEADING_PATH = "MISLEADING_PATH"
     VISITED_CELLS = "VISITED_CELLS"
     RANDOM_PATH = "RANDOM_PATH"
+    LANDMARKS = "LANDMARKS"
 
 
 class SaltAndPepper(MiniGridEnv):
@@ -592,7 +593,6 @@ class SaltAndPepper(MiniGridEnv):
         self.nonstationary_only_optimal = nonstationary_only_optimal
         self.nonstationary_max_path_count = nonstationary_max_path_count
         self.tile_size = tile_size
-        self.path_width = path_width
         mission_space = MissionSpace(mission_func=self._gen_mission)
 
         if max_steps is None:
@@ -604,7 +604,15 @@ class SaltAndPepper(MiniGridEnv):
         show_landmarks = kwargs.pop("show_landmarks", False)
         agent_view_size = kwargs.pop("agent_view_size", 5)
         path_mode = kwargs.pop("path_mode", "NONE")
-        # self.invisible_goal = kwargs.pop("invisible_goal", False)
+
+        if path_mode == PathMode.LANDMARKS or show_landmarks:
+            show_landmarks = True
+            path_mode = "NONE"
+        if path_mode == PathMode.VISITED_CELLS:
+            self.path_width = 1
+        else:
+            self.path_width = 3
+
         super().__init__(
             mission_space=mission_space,
             grid_size=size,

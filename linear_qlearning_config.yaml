@@ -5,7 +5,7 @@ capture_video: false
 seed: 1
 agent_view_size: 3
 max_steps: 1000
-path_mode: "VISITED_CELLS"
+path_mode: "NONE"
 show_landmarks: false
 
 render_options:
@@ -50,4 +50,4 @@ nonstationary_only_optimal: false
 
 tile_size: 8
 
-path_width: 1
+path_width: 3
