@@ -117,10 +117,10 @@ class NumpyQLearningAgent:
                 f"Target edge length ({agent_pixel_view_edge_dim}) cannot be larger than original size ({env_obs_dims[0]})"
             )
 
-        if (env_obs_dims[0] - agent_pixel_view_edge_dim) % 2 != 0:
-            raise ValueError(
-                f"Target edge length ({agent_pixel_view_edge_dim}) must be even"
-            )
+        # if (env_obs_dims[0] - agent_pixel_view_edge_dim) % 2 != 0:
+        #     raise ValueError(
+        #         f"Target edge length ({agent_pixel_view_edge_dim}) must be even"
+        #     )
 
         self.num_states = (
             agent_pixel_view_edge_dim * agent_pixel_view_edge_dim * env_obs_dims[2]
@@ -276,10 +276,10 @@ class FlaxQLearningAgent:
                 f"Target edge length ({agent_pixel_view_edge_dim}) cannot be larger than original size ({env_obs_dims[0]})"
             )
 
-        if (env_obs_dims[0] - agent_pixel_view_edge_dim) % 2 != 0:
-            raise ValueError(
-                f"Target edge length ({agent_pixel_view_edge_dim}) must be even"
-            )
+        # if (env_obs_dims[0] - agent_pixel_view_edge_dim) % 2 != 0:
+        #     raise ValueError(
+        #         f"Target edge length ({agent_pixel_view_edge_dim}) must be even"
+        #     )
 
         self.num_states = (
             agent_pixel_view_edge_dim * agent_pixel_view_edge_dim * env_obs_dims[2]
