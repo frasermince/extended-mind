@@ -1,0 +1,44 @@
+path_mode:
+  - NONE
+  - SHORTEST_PATH
+  - SUBOPTIMAL_PATH
+  - MISLEADING_PATH
+  - RANDOM_PATH
+  - LANDMARKS
+  - VISITED_CELLS
+
+nonstationary_path_decay_pixels:
+  - 300
+nonstationary_path_decay_chance:
+  - .25
+nonstationary_path_inclusion_pixels:
+  - 8
+
+training.end_epsilon:
+  - 0.01
+training.exploration_fraction:
+  - 0.5
+training.start_epsilon: .1
+
+seed_offset: 30
+
+
+
+training.learning_rate:
+  - 1e-2
+  - 5e-3
+  - 1e-3
+  - 5e-4
+  - 1e-4
+  - 5e-5
+  - 1e-5
+
+training.dense_features:
+  - [4, 4]
+  - [8, 8]
+  - [16, 16]
+  - [32, 32]
+  - [4, 4, 4]
+  - [8, 8, 8]
+  - [16, 16, 16]
+  - [32, 32, 32]
