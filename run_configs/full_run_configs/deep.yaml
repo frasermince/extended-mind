@@ -42,3 +42,8 @@ training.dense_features:
   - [8, 8, 8]
   - [16, 16, 16]
   - [32, 32, 32]
+
+wandb_project_name: "SaltAndPepper"
+wandb_entity: "glen-berseth"
+track: true
+track_offline: true
