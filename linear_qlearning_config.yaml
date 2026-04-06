@@ -51,5 +51,3 @@ nonstationary_only_optimal: false
 tile_size: 8
 
 path_width: 3
-
-seed_offset: 0
