@@ -92,5 +92,3 @@ train: true
 dry_run: false
 
 exp_group_id: "test_id"
-
-seed_offset: 0

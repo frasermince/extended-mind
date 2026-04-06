@@ -56,5 +56,3 @@ training.end_epsilon:
 training.exploration_fraction:
   - 0.5
 training.start_epsilon: .1
-
-seed_offset: 30
