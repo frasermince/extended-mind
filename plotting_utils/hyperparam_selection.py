@@ -1,4 +1,7 @@
 import os
+import re
+import gc
+import time
 import duckdb
 import json
 import numpy as np
@@ -27,8 +30,6 @@ def delete_path_metric_records(
         output_dir: Directory to write the filtered parquet files.
         recursive_glob: Glob pattern for finding parquet files.
     """
-    import re
-
     # Find all input parquet files
     input_files = glob.glob(os.path.join(outputs_root, recursive_glob), recursive=True)
     print(f"Found {len(input_files)} parquet files to process")
@@ -148,6 +149,109 @@ def load_runs_from_parquet(
     return df
 
 
+def select_best_hyperparams_linear(selection_paths: str | list[str]) -> dict:
+    """Select best learning rate per edge_dim from linear selection-phase JSONL(s).
+
+    Accepts a single path or a list of paths (e.g. even/odd edge dim files).
+
+    Returns:
+        dict mapping edge_dim (int) -> learning_rate (float)
+    """
+    if isinstance(selection_paths, str):
+        selection_paths = [selection_paths]
+
+    best: dict[int, tuple[float, float]] = {}  # edge_dim -> (best_auc, best_lr)
+    for path in selection_paths:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                edge_dim = int(row["edge_dim"])
+                lr = float(row["learning_rate"])
+                auc = float(row.get("average_reward_area_under_curve", 0))
+                prev_auc, _ = best.get(edge_dim, (float("-inf"), 0.0))
+                if auc > prev_auc:
+                    best[edge_dim] = (auc, lr)
+    return {dim: lr for dim, (_, lr) in best.items()}
+
+
+def select_best_hyperparams_deep(selection_paths: str | list[str]) -> dict:
+    """Select best learning rate per (depth, width) from deep results.
+
+    Accepts a single path or a list of paths.
+    Supports both:
+      - JSONL with network_depth/network_width/learning_rate keys
+      - Legacy JSON arrays with depth/width and LR parsed from run_key
+
+    Returns:
+        dict mapping (network_depth, network_width) -> learning_rate (float)
+    """
+    if isinstance(selection_paths, str):
+        selection_paths = [selection_paths]
+
+    def _parse_row(row):
+        depth = int(row.get("network_depth", row.get("depth")))
+        width = int(row.get("network_width", row.get("width")))
+        if "learning_rate" in row:
+            lr = float(row["learning_rate"])
+        else:
+            m = re.search(r"learning_rate_([0-9.eE+-]+)", row.get("run_key", ""))
+            lr = float(m.group(1)) if m else 0.0
+        auc = float(row.get("average_reward_area_under_curve", 0))
+        return depth, width, lr, auc
+
+    best: dict[tuple[int, int], tuple[float, float]] = {}
+
+    for selection_path in selection_paths:
+        with open(selection_path, "r", encoding="utf-8") as f:
+            first_char = f.read(1)
+            f.seek(0)
+            if first_char == "[":
+                rows = json.load(f)
+            else:
+                rows = []
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        rows.append(json.loads(line))
+
+        for row in rows:
+            depth, width, lr, auc = _parse_row(row)
+            key = (depth, width)
+            prev_auc, _ = best.get(key, (float("-inf"), 0.0))
+            if auc > prev_auc:
+                best[key] = (auc, lr)
+    return {k: lr for k, (_, lr) in best.items()}
+
+
+def _build_confirmation_extra_where(
+    selected_hyperparams: dict, agent_type: str, seed_min: int, seed_max: int
+) -> str:
+    """Build an extra_where clause that restricts to selected hyperparams and seed range."""
+    seed_clause = (
+        f"CAST(seed AS INTEGER) >= {seed_min} "
+        f"AND CAST(seed AS INTEGER) <= {seed_max}"
+    )
+
+    if agent_type == "linear":
+        # selected_hyperparams: {edge_dim -> lr}
+        pair_clauses = [
+            f"(CAST(step_size AS DOUBLE) = {lr} AND CAST(agent_pixel_view_edge_dim AS INTEGER) = {dim})"
+            for dim, lr in selected_hyperparams.items()
+        ]
+    else:
+        # selected_hyperparams: {(depth, width) -> lr}
+        pair_clauses = [
+            f"(CAST(learning_rate AS DOUBLE) = {lr} AND CAST(network_depth AS INTEGER) = {depth} AND CAST(network_width AS INTEGER) = {width})"
+            for (depth, width), lr in selected_hyperparams.items()
+        ]
+
+    combo_clause = " OR ".join(pair_clauses)
+    return f"{seed_clause} AND ({combo_clause})"
+
+
 def aggregate_runs_linear_duckdb(
     outputs_root: str,
     jsonl_path: str,
@@ -203,10 +307,6 @@ def aggregate_runs_linear_duckdb(
     print(f"Found {len(combos)} unique (lr, dim) combinations")
     con.close()
 
-    import json
-    import gc
-    import time
-
     def print_memory():
         """Print current memory usage (if psutil available)."""
         try:
@@ -228,8 +328,6 @@ def aggregate_runs_linear_duckdb(
 
     # Load already-processed combinations from existing file
     # Use regex to extract keys WITHOUT parsing full JSON (saves massive memory)
-    import re
-
     lr_pattern = re.compile(r'"learning_rate":\s*([0-9.eE+-]+)')
     dim_pattern = re.compile(r'"agent_pixel_view_edge_dim":\s*(\d+)')
 
@@ -565,10 +663,6 @@ def aggregate_runs_linear_exploration_duckdb(
     print(f"Found {len(combos)} unique (lr, dim) combinations")
     con.close()
 
-    import json
-    import gc
-    import time
-
     def print_memory():
         """Print current memory usage (if psutil available)."""
         try:
@@ -590,8 +684,6 @@ def aggregate_runs_linear_exploration_duckdb(
 
     # Load already-processed combinations from existing file
     # Use regex to extract keys WITHOUT parsing full JSON (saves massive memory)
-    import re
-
     lr_pattern = re.compile(r'"learning_rate":\s*([0-9.eE+-]+)')
     dim_pattern = re.compile(r'"agent_pixel_view_edge_dim":\s*(\d+)')
 
@@ -939,10 +1031,6 @@ def aggregate_runs_linear_nonstationary_duckdb(
     print(f"Found {len(combos)} unique (lr, dim, decay_chance) combinations")
     con.close()
 
-    import json
-    import gc
-    import time
-
     def print_memory():
         """Print current memory usage (if psutil available)."""
         try:
@@ -961,8 +1049,6 @@ def aggregate_runs_linear_nonstationary_duckdb(
     # Use regex to extract keys WITHOUT parsing full JSON (saves massive memory)
     # We track (lr, dim, decay_chance_str) tuples to match our batching granularity
     # decay_chance is kept as string to avoid floating point comparison issues
-    import re
-
     lr_pattern = re.compile(r'"learning_rate":\s*([0-9.eE+-]+)')
     dim_pattern = re.compile(r'"agent_pixel_view_edge_dim":\s*(\d+)')
     # Extract decay_chance as string from run_key path (more reliable than the float value)
@@ -1269,21 +1355,18 @@ def aggregate_runs_linear_nonstationary_duckdb(
 
 def aggregate_runs_duckdb(
     outputs_root: str,
+    jsonl_path: str,
     *,
     recursive_glob: str = "**/*.parquet",
     step_subsample: int = 10,
     extra_where: str | None = None,
 ):
-    """Aggregate Parquet logs with DuckDB using pushdown and vectorized ops.
+    """Aggregate Parquet logs with DuckDB, writing results to a JSONL file.
 
-    Returns a pandas DataFrame with one row per
-    (depth,width,learning_rate,optimal_path) containing:
-      - average_rewards_mean_subsampled: list[float] (subsampled mean per step)
-      - average_rewards_standard_error_subsampled: list[float] (SEM per step)
-      - total_rewards_mean: float (mean total reward across seeds)
-      - total_rewards_standard_error: float (SEM of total reward)
-      - total_rewards_individual_seeds: list[float]
-      - learning_rate_str: str (stable string for labeling)
+    Runs a single aggregation query and writes each result row to a JSONL file
+    in plotting format.  Supports resumability: already-processed combos
+    (identified by network_depth, network_width, learning_rate, optimal_path)
+    are skipped on re-run.
     """
     try:
         duckdb = __import__("duckdb")
@@ -1292,15 +1375,48 @@ def aggregate_runs_duckdb(
 
     # Build a safe parquet glob for DuckDB
     base = outputs_root.rstrip("/")
-    # Escape single quotes for SQL literal safety
     base_escaped = base.replace("'", "''")
     glob_path = f"{base_escaped}/{recursive_glob}"
 
-    # Optional extra predicates (e.g., date or exp_group filters)
     where_extra_sql = f" AND ({extra_where})" if extra_where else ""
 
-    # Use window functions and aggregate-to-arrays; rely on Parquet predicate &
-    # projection pushdown so we only read required columns/rows.
+    # ---- Resumability: load already-processed combos from existing JSONL ----
+    if not jsonl_path:
+        jsonl_path = os.path.join(
+            os.path.dirname(__file__),
+            "deep_aggregation_progress.jsonl",
+        )
+    print(f"Using results file: {jsonl_path}")
+
+    depth_pattern = re.compile(r'"network_depth":\s*(\d+)')
+    width_pattern = re.compile(r'"network_width":\s*(\d+)')
+    lr_pattern = re.compile(r'"learning_rate":\s*([0-9.eE+-]+)')
+    opt_pattern = re.compile(r'"optimal_path":\s*(true|false)')
+
+    processed_combos = set()
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    d = depth_pattern.search(line)
+                    w = width_pattern.search(line)
+                    lr = lr_pattern.search(line)
+                    op = opt_pattern.search(line)
+                    if d and w and lr and op:
+                        processed_combos.add(
+                            (
+                                int(d.group(1)),
+                                int(w.group(1)),
+                                float(lr.group(1)),
+                                op.group(1) == "true",
+                            )
+                        )
+                except (ValueError, AttributeError):
+                    pass
+        print(f"Found {len(processed_combos)} already-processed combinations")
+        gc.collect()
+
+    # ---- Run aggregation query ----
     query = f"""
         WITH base AS (
             SELECT
@@ -1331,7 +1447,6 @@ def aggregate_runs_duckdb(
                 ) AS cum_avg
             FROM base
         ),
-        -- Subsampled per-seed cumulative averages for per-seed curves
         per_seed_cum_sub AS (
             SELECT * FROM per_seed_cum
             WHERE MOD(step, {int(step_subsample)}) = 0
@@ -1348,7 +1463,6 @@ def aggregate_runs_duckdb(
             SELECT * FROM curves
             WHERE MOD(step, {int(step_subsample)}) = 0
         ),
-        -- Build per-seed curve arrays (one array per seed)
         per_seed_curve_arrays AS (
             SELECT
                 network_depth, network_width, learning_rate, optimal_path, seed,
@@ -1356,7 +1470,6 @@ def aggregate_runs_duckdb(
             FROM per_seed_cum_sub
             GROUP BY 1,2,3,4,5
         ),
-        -- Aggregate per-seed arrays into a list-of-lists per group
         per_seed_curve_matrix AS (
             SELECT
                 network_depth, network_width, learning_rate, optimal_path,
@@ -1369,7 +1482,6 @@ def aggregate_runs_duckdb(
                 network_depth, network_width, learning_rate, optimal_path,
                 array_agg(mean_curve ORDER BY step) AS average_rewards_mean_subsampled,
                 array_agg(sem_curve ORDER BY step) AS average_rewards_standard_error_subsampled,
-                -- Back-compat arrays (mean and SEM across seeds)
                 array_agg(mean_curve ORDER BY step) AS average_reward_curve_standard_error_base_mean,
                 array_agg(sem_curve ORDER BY step) AS average_reward_curve_standard_error
             FROM curves_sub
@@ -1403,42 +1515,100 @@ def aggregate_runs_duckdb(
         ORDER BY 1,2,3,5
     """
 
+    # Custom JSON encoder to handle numpy types
+    class NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if hasattr(obj, "tolist"):
+                return obj.tolist()
+            if hasattr(obj, "item"):
+                return obj.item()
+            return super().default(obj)
+
+    def _to_float_list(seq):
+        if seq is None:
+            return None
+        return [float(x) for x in (list(seq) if not isinstance(seq, list) else seq)]
+
+    def _to_2d_float_list(list_of_seq):
+        if list_of_seq is None:
+            return None
+        outer = list_of_seq if isinstance(list_of_seq, list) else list(list_of_seq)
+        return [
+            [float(v) for v in (inner if isinstance(inner, list) else list(inner))]
+            for inner in outer
+        ]
+
+    def _transform_to_plotting_format(row_dict, outputs_root):
+        depth = int(row_dict["network_depth"])
+        width = int(row_dict["network_width"])
+        lr_str = str(row_dict["learning_rate_str"])
+        optimal_path = bool(row_dict["optimal_path"])
+
+        run_key = (
+            f"{outputs_root}/learning_rate_{lr_str}/"
+            f"network_depth_{depth}/network_width_{width}"
+        )
+        if optimal_path:
+            run_key += "/optimal_path"
+
+        return {
+            "run_key": run_key,
+            "network_depth": depth,
+            "network_width": width,
+            "learning_rate": float(row_dict["learning_rate"]),
+            "learning_rate_str": lr_str,
+            "optimal_path": optimal_path,
+            "average_reward_area_under_curve": float(row_dict["total_rewards_mean"]),
+            "average_reward_curve": _to_2d_float_list(row_dict["average_reward_curve"]),
+            "average_reward_curve_standard_error": _to_float_list(
+                row_dict["average_reward_curve_standard_error"]
+            ),
+            "per_seed_aucs": _to_float_list(row_dict["total_rewards_individual_seeds"]),
+            "per_seed_auc_standard_error": float(
+                row_dict["total_rewards_standard_error"]
+            ),
+            "average_reward_mean": _to_float_list(
+                row_dict["average_rewards_mean_subsampled"]
+            ),
+        }
+
     con = duckdb.connect()
     con.execute("SET preserve_insertion_order = false")
     con.execute("PRAGMA enable_progress_bar")
     con.execute("PRAGMA enable_progress_bar_print = true")
     print("Running DuckDB aggregation query...")
+
     try:
-        df = con.execute(query).df()
+        batch_df = con.execute(query).df()
     finally:
         con.close()
-    print("Aggregation complete.")
 
-    # Coerce array columns to native Python lists if needed
-    # Back-compat mappings for output column names
-    if "total_rewards_mean" in df.columns:
-        df["average_reward_area_under_curve"] = df["total_rewards_mean"]
-    if "total_rewards_individual_seeds" in df.columns:
-        df["per_seed_aucs"] = df["total_rewards_individual_seeds"]
-    if "total_rewards_standard_error" in df.columns:
-        df["per_seed_auc_standard_error"] = df["total_rewards_standard_error"]
-    if "average_rewards_mean_subsampled" in df.columns:
-        df["average_reward_mean"] = df["average_rewards_mean_subsampled"]
+    print(f"Query returned {len(batch_df)} rows. Writing to JSONL...")
 
-    # Ensure list-like columns are Python lists
-    for col in (
-        "average_reward_curve",
-        "average_reward_curve_standard_error",
-        "average_rewards_mean_subsampled",
-        "average_rewards_standard_error_subsampled",
-        "total_rewards_individual_seeds",
-        "per_seed_aucs",
-        "average_reward_mean",
-    ):
-        if col in df.columns:
-            df[col] = df[col].apply(lambda x: list(x) if not isinstance(x, list) else x)
+    new_rows = 0
+    skipped = 0
+    with open(jsonl_path, "a", encoding="utf-8") as jsonl_file:
+        for _, row in batch_df.iterrows():
+            row_dict = row.to_dict()
+            combo_key = (
+                int(row_dict["network_depth"]),
+                int(row_dict["network_width"]),
+                float(row_dict["learning_rate"]),
+                bool(row_dict["optimal_path"]),
+            )
+            if combo_key in processed_combos:
+                skipped += 1
+                continue
+            plotting_dict = _transform_to_plotting_format(row_dict, outputs_root)
+            jsonl_file.write(json.dumps(plotting_dict, cls=NumpyEncoder) + "\n")
+            new_rows += 1
+        jsonl_file.flush()
 
-    return df
+    del batch_df
+    gc.collect()
+
+    print(f"Done. Wrote {new_rows} new rows, skipped {skipped} already-processed.")
+    print(f"Results at: {jsonl_path}")
 
 
 def process_linear_hyperparams(jsonl_path: str):
@@ -1539,165 +1709,141 @@ def process_deep_hyperparams(duck_df):
     print(f"Wrote {len(results_list)} records to {out_json}")
 
 
-if __name__ == "__main__":
-    if False:
-        outputs_root = "/Users/frasermince/Programming/parquet_runs_linear_env_sweep"
-        delete_path_metric_records(
-            outputs_root, "nonstationary_dec_1_same_dir_structure"
+PATH_MODES_BASE = [
+    "NONE",
+    "SHORTEST_PATH",
+    "SUBOPTIMAL_PATH",
+    "MISLEADING_PATH",
+    "RANDOM_PATH",
+    "LANDMARKS",
+]
+PATH_MODES_LINEAR = PATH_MODES_BASE + ["VISITED_CELLS"]
+
+
+def run_selection_aggregation(
+    agent_type: str = "linear",
+    outputs_name: str = "full_run_linear_parquet_all_edge_dims_april_6",
+    seed_max: int = 29,
+):
+    """Phase 1: Aggregate selection seeds (all LR x capacity combos)."""
+    path_modes = PATH_MODES_LINEAR if agent_type == "linear" else PATH_MODES_BASE
+    base_dir = (
+        f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}"
+    )
+    aggregate_fn = (
+        aggregate_runs_linear_duckdb
+        if agent_type == "linear"
+        else aggregate_runs_duckdb
+    )
+    agent_prefix = "agent_name_linear_qlearning/" if agent_type == "linear" else ""
+
+    seed_where = f"CAST(seed AS INTEGER) <= {seed_max}"
+
+    for path_mode in path_modes:
+        output_path = f"path_mode_{path_mode}"
+        outputs_root = f"{base_dir}/{agent_prefix}{output_path}"
+        aggregate_fn(
+            outputs_root=outputs_root,
+            jsonl_path=f"{base_dir}/{outputs_name}_{output_path}_selection.jsonl",
+            recursive_glob="**/*.parquet",
+            step_subsample=10,
+            extra_where=seed_where,
         )
+
+
+def run_confirmation_aggregation(
+    agent_type: str = "deep",
+    outputs_name: str = "full_run_deep_parquet_apr_6",
+    selection_dirs: str | list[str] | None = None,
+    selection_file_pattern: str | None = None,
+    seed_min: int = 30,
+    seed_max: int = 59,
+):
+    """Phase 2: Use selection-phase results to pick best LR per capacity,
+    then aggregate only those LRs on confirmation seeds.
+
+    selection_dirs: directory or list of directories containing selection
+        results files. Defaults to the same folder as outputs_name.
+    selection_file_pattern: pattern for selection files per path_mode.
+        Use {path_mode} as placeholder. Defaults to
+        "{outputs_name}_path_mode_{path_mode}_selection.jsonl".
+    """
+    base = "/Users/frasermince/Programming/hidden_llava/current_processed"
+    data_dir = f"{base}/{outputs_name}"
+
+    if selection_dirs is None:
+        sel_dirs = [data_dir]
+    elif isinstance(selection_dirs, str):
+        sel_dirs = [selection_dirs]
     else:
-        # New path: read from nested Parquet dataset
-        redirect_level = 1
-        testing_on = True
-        accum_results = {}
-        depths = (2, 3)
-        widths = (4, 8, 16, 32)
-        missing_seeds = {}
-        learning_rates = (
-            "1e-05",
-            "5e-05",
-            "0.0001",
-            "0.0005",
-            "0.001",
-            "0.005",
-            "0.01",
-        )
-        for optimal_path in (True, False):
-            for depth in depths:
-                for width in widths:
-                    for lr in learning_rates:
-                        missing_seeds[(depth, width, lr, optimal_path)] = set(range(31))
+        sel_dirs = selection_dirs
 
-        use_parquet = True
-        if use_parquet:
-            outputs_root = (
-                "/Users/frasermince/Programming/hidden_llava/larger_grid_runs_test/"
-            )
+    select_fn = (
+        select_best_hyperparams_linear
+        if agent_type == "linear"
+        else select_best_hyperparams_deep
+    )
+    aggregate_fn = (
+        aggregate_runs_linear_duckdb
+        if agent_type == "linear"
+        else aggregate_runs_duckdb
+    )
+    agent_prefix = "agent_name_linear_qlearning/" if agent_type == "linear" else ""
 
-            # Debug: Read first row from each parquet file (memory efficient)
+    path_modes = PATH_MODES_LINEAR if agent_type == "linear" else PATH_MODES_BASE
 
-            # Aggregate entire directory in one DuckDB call
-            if False:
+    for path_mode in path_modes:
+        output_path = f"path_mode_{path_mode}"
 
-                try:
-                    duck_df = aggregate_runs_duckdb(
-                        outputs_root=outputs_root,
-                        recursive_glob="**/*.parquet",
-                        step_subsample=10,
-                    )
-
-                except Exception as e:
-                    raise SystemExit(f"DuckDB aggregation failed: {e}") from e
-
-                process_deep_hyperparams(duck_df)
-            elif False:
-                try:
-                    aggregate_runs_linear_nonstationary_duckdb(
-                        outputs_root=outputs_root,
-                        recursive_glob="**/*.parquet",
-                        start_from_combo=0,  # Start from beginning with new finer batching
-                    )
-                except Exception as e:
-                    raise SystemExit(f"DuckDB aggregation failed: {e}") from e
-
-                # Optional: Convert JSONL to JSON array format (for legacy compatibility)
-                # The plotting code can now read JSONL directly, so this is optional
-                # Uncomment the line below if you need the JSON file format
-                # process_linear_hyperparams(jsonl_path)
-                # print(f"\nJSONL file ready at: {jsonl_path}")
-                # print("Plotting code can read this JSONL file directly.")
+        # Gather selection files from all dirs
+        selection_files = []
+        for sel_dir in sel_dirs:
+            if selection_file_pattern:
+                selection_files.append(os.path.join(
+                    sel_dir, selection_file_pattern.format(path_mode=path_mode)
+                ))
             else:
-                try:
-                    # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/parquet_runs_linear_beyond_basic_paths/agent_name_linear_qlearning/path_mode_MISLEADING_PATH"
-                    # aggregate_runs_linear_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path="/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_MISLEADING_PATH_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/parquet_runs_linear_beyond_basic_paths/agent_name_linear_qlearning/path_mode_RANDOM_PATH"
-                    # aggregate_runs_linear_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path="/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_RANDOM_PATH_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/parquet_runs_linear_beyond_basic_paths/agent_name_linear_qlearning/path_mode_SUBOPTIMAL_PATH"
-                    # aggregate_runs_linear_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path="/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SUBOPTIMAL_PATH_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/linear_landmarks_2/agent_name_linear_qlearning/path_mode_LANDMARKS"
-                    path_modes = [
-                        "NONE",
-                        "SHORTEST_PATH",
-                        "SUBOPTIMAL_PATH",
-                        "MISLEADING_PATH",
-                        "RANDOM_PATH",
-                        "LANDMARKS",
-                        "VISITED_CELLS",
-                    ]
-                    for path_mode in path_modes:
-                        output_path = f"path_mode_{path_mode}"
-                        outputs_name = (
-                            # "parquet_runs_linear_visited_cells_eps_schedule_v3_jan_15"
-                            "all_edge_dims_linear_qlearning_odd_edge_dims_feb_27"
-                        )
-                        outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/agent_name_linear_qlearning/{output_path}"
-                        aggregate_runs_linear_duckdb(
-                            outputs_root=outputs_root,
-                            jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
-                            recursive_glob="**/*.parquet",
-                            step_subsample=10,
-                        )
-                    # output_path = "path_mode_NONE"
-                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/agent_name_linear_qlearning/{output_path}"
-                    # aggregate_runs_linear_exploration_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_{output_path}_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_name = (
-                    #     "parquet_runs_linear_visited_cells_skinny_paths_counter"
-                    # )
-                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
-                    # aggregate_runs_linear_nonstationary_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_name = "parquet_runs_linear_visited_cells_skinny_paths"
-                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
-                    # aggregate_runs_linear_nonstationary_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_name = "parquet_runs_linear_visited_cells_seasonal"
-                    # outputs_root = f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}"
-                    # aggregate_runs_linear_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path=f"/Users/frasermince/Programming/hidden_llava/current_processed/nonstationary_runs/{outputs_name}/{outputs_name}_PATH_MODE_VISITED_CELLS_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                    # outputs_root = "/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SHORTEST_PATH_nov19_linear/path_mode_SHORTEST_PATH"
-                    # aggregate_runs_linear_duckdb(
-                    #     outputs_root=outputs_root,
-                    #     jsonl_path="/Users/frasermince/Programming/hidden_llava/current_processed/path_mode_SHORTEST_PATH_aggregation_progress.jsonl",
-                    #     recursive_glob="**/*.parquet",
-                    #     step_subsample=10,
-                    # )
-                except Exception as e:
-                    raise SystemExit(f"DuckDB aggregation failed: {e}") from e
+                dir_name = os.path.basename(sel_dir)
+                selection_files.append(
+                    f"{sel_dir}/{dir_name}_{output_path}_aggregation_progress.jsonl"
+                )
 
-                # process_linear_hyperparams(jsonl_path)
-        else:
-            # Legacy path disabled in favor of DuckDB aggregation demo.
-            # Keeping historical code commented for reference.
-            pass
+        selected = select_fn(selection_files)
+        print(f"\n=== {path_mode}: selected hyperparams ===")
+        for key in sorted(selected):
+            print(f"  {key}  ->  lr={selected[key]}")
+
+        extra_where = _build_confirmation_extra_where(
+            selected, agent_type, seed_min, seed_max
+        )
+
+        outputs_root = f"{data_dir}/{agent_prefix}{output_path}"
+        aggregate_fn(
+            outputs_root=outputs_root,
+            jsonl_path=f"{data_dir}/{outputs_name}_{output_path}_confirmation.jsonl",
+            recursive_glob="**/*.parquet",
+            step_subsample=10,
+            extra_where=extra_where,
+        )
+
+
+if __name__ == "__main__":
+    base = "/Users/frasermince/Programming/hidden_llava/current_processed"
+
+    # # Deep confirmation
+    # run_confirmation_aggregation(
+    #     agent_type="deep",
+    #     outputs_name="full_run_deep_parquet_apr_6",
+    #     selection_dirs=f"{base}/deep_results_dec_7",
+    #     selection_file_pattern="{path_mode}_results.json",
+    # )
+
+    # Linear confirmation
+    run_confirmation_aggregation(
+        agent_type="linear",
+        outputs_name="full_run_linear_parquet_all_edge_dims_april_7",
+        selection_dirs=[
+            f"{base}/all_edge_dims_linear_qlearning_even_edge_dims_feb_26",
+            f"{base}/all_edge_dims_linear_qlearning_odd_edge_dims_feb_27",
+        ],
+    )
