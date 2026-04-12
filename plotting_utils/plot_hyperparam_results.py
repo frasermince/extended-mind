@@ -5,10 +5,14 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from scipy import stats
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import ListedColormap  # noqa: E402
+from matplotlib.patches import Patch  # noqa: E402
 
 # Prefer Helvetica-like sans fonts (Nature-style)
 matplotlib.rcParams.update(
@@ -90,19 +94,43 @@ def _sort_unique(values: List[str]) -> List[str]:
 
 def load_results(json_path: str) -> pd.DataFrame:
     """
-    Load results JSON into a DataFrame with columns:
+    Load results JSON or JSONL into a DataFrame with columns:
     [learning_rate, depth, width, avg_success_rate,
     avg_average_episodic_reward]
+
+    Supports both JSON array format (legacy) and JSONL format
+    (one JSON object per line).
     """
     with open(json_path, "r", encoding="utf-8") as f:
-        data: List[Dict] = json.load(f)
+        first_char = f.read(1)
+        f.seek(0)
+
+        if first_char == "[":
+            data: List[Dict] = json.load(f)
+        else:
+            data = []
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data.append(json.loads(line))
+                except json.JSONDecodeError:
+                    print(f"Warning: Skipping malformed line" f" in {json_path}")
+                    continue
 
     records: List[Dict] = []
     max_learning_rate_per_capacity = {}
     for row in data:
         run_key = row.get("run_key", "")
-        lr_str = _parse_learning_rate_from_run_key(run_key)
-        optimal_path = _parse_optimal_path_from_run_key(run_key)
+        lr_str = row.get(
+            "learning_rate_str",
+            _parse_learning_rate_from_run_key(run_key),
+        )
+        optimal_path = row.get(
+            "optimal_path",
+            _parse_optimal_path_from_run_key(run_key),
+        )
         # Optional new metrics
         auc_val = row.get("average_reward_area_under_curve")
         try:
@@ -123,8 +151,8 @@ def load_results(json_path: str) -> pd.DataFrame:
                 float(lr_str) if lr_str not in {"unknown", ""} else np.nan
             ),
             "optimal_path": optimal_path,
-            "depth": int(row["depth"]),
-            "width": int(row["width"]),
+            "depth": int(row.get("depth", row.get("network_depth"))),
+            "width": int(row.get("width", row.get("network_width"))),
             # "avg_success_rate": float(row["avg_success_rate"]),
             # "avg_average_episodic_reward": float(
             #    row["avg_average_episodic_reward"]
@@ -214,18 +242,16 @@ def _build_pair_color_map(
     return pair_to_color
 
 
-def _plot_side_by_side_path_vs_pathless(
+def _plot_step_size_sweep(
     paths: List[Tuple[str, pd.DataFrame]],
-    metric: str,
     shared_colors: Dict[Tuple[int, int], tuple],
-    title: str,  # kept for signature compatibility; ignored
     ylabel: str,
     output_path: str,
 ) -> None:
     """
-    Side-by-side plots: left=pathless, right=optimal_path, shared colors and
-    legend. Titles removed; legend in top-right of the Path Visible plot.
+    Plot total reward (AUC) across step sizes, one panel per group.
     """
+    metric = "average_reward_area_under_curve"
     for path_label, df in paths:
         if df.empty:
             return
@@ -312,39 +338,32 @@ def _plot_side_by_side_path_vs_pathless(
     fig.tight_layout(pad=1.5)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.savefig(_to_pdf_path(output_path), bbox_inches="tight")
+    png_path = _to_pdf_path(output_path).replace(".pdf", ".png")
+    fig.savefig(png_path, bbox_inches="tight")
     # plt.show()
 
 
-def _plot_best_auc_reward_curves_side_by_side(
-    paths: List[Tuple[str, pd.DataFrame]],
-    title_base: str,
-    ylabel: str,
+def _plot_best_avg_reward_curves(
+    label: str,
+    df: pd.DataFrame,
     shared_colors: Dict[Tuple[int, int], tuple],
     output_path: str,
 ) -> None:
-    """Side-by-side panels (Path Not Visible vs Path Visible) of reward curves
-    where, for each (depth, width), we select the learning rate that maximizes
-    reward AUC within that panel.
+    """Plot reward curves by capacity, selecting the learning rate that maximizes
+    reward AUC for each (depth, width) group.
 
     Requires columns:
       - "average_reward_area_under_curve"
       - "average_reward_curve"
+      - "average_reward_curve_standard_error"
     """
-
-    for path_label, df in paths:
-        if df.empty:
-            return
-        if (
-            "average_reward_area_under_curve" not in df.columns
-            or "average_reward_curve" not in df.columns
-        ):
-            return
-
-    # df_path = df_all[df_all["optimal_path"] == True]  # noqa: E712
-    # df_pathless = df_all[df_all["optimal_path"] == False]  # noqa: E712
-
-    # if df_path.empty and df_pathless.empty:
-    #   return
+    if df.empty:
+        return
+    if (
+        "average_reward_area_under_curve" not in df.columns
+        or "average_reward_curve" not in df.columns
+    ):
+        return
 
     pair_to_color = shared_colors
 
@@ -433,48 +452,187 @@ def _plot_best_auc_reward_curves_side_by_side(
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    # Create figure and draw panels
-    fig, axes = plt.subplots(1, len(paths), figsize=(18, 6), squeeze=False)
+    fig, ax = plt.subplots(figsize=(18, 6))
+    _draw_panel(ax, df, label)
 
-    for i, (path_label, df) in enumerate(paths):
-        _draw_panel(axes[0, i], df, path_label)
+    ax.set_ylim(ax.get_ylim()[0], 0.05)
 
-    # Match y-limits for comparability
-    ymins: List[float] = []
-    ymaxs: List[float] = []
-    for ax in axes[0, :]:
-        if ax.get_visible():
-            ymin, ymax = ax.get_ylim()
-            ymins.append(ymin)
-            ymaxs.append(ymax)
-    if ymins and ymaxs:
-        # common_ylim = (min(ymins), max(ymaxs))
-        common_ylim = (min(ymins), 0.05)
-        for ax in axes[0, :]:
-            if ax.get_visible():
-                ax.set_ylim(*common_ylim)
-
-    # Legend inside the right plot with a descriptive title
-    ax_right = axes[0, -1]
-    if ax_right.get_visible():
-        handles, labels = ax_right.get_legend_handles_labels()
-        if handles and labels:
-            ax_right.legend(
-                title="Network Size",
-                fontsize=12,
-                title_fontsize=14,
-                loc="upper left",
-                frameon=False,
-            )
+    handles, labels = ax.get_legend_handles_labels()
+    if handles and labels:
+        ax.legend(
+            title="Network Size",
+            fontsize=12,
+            title_fontsize=14,
+            loc="upper left",
+            frameon=False,
+        )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout(pad=1.5)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    png_path = output_path.replace(".pdf", ".png")
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    # plt.show()
 
 
-def _plot_grouped_bars_path_vs_pathless_by_capacity(
+def _plot_pvals(
+    pathless_df: pd.DataFrame,
+    path_df: pd.DataFrame,
+    metric: str,
+    dot_metric: Optional[str],
+    error_metric: str,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    output_path: str,
+    agg: str = "max",
+    show_error_bars: bool = True,
+    capsize: float = 3.0,
+    path_label: str = "Path Visible",
+    pathless_label: str = "No Path",
+    pathless_color: str = "#d62728",
+    path_color: str = "#1f77b4",
+    show_sample_dots: bool = True,
+    sample_dot_size: float = 18.0,
+    sample_dot_alpha: float = 0.75,
+) -> None:
+    def series_to_list(series):
+        return series.tolist()
+
+    pathless_idx = pathless_df.groupby(
+        ["depth", "width", "optimal_path"]
+    )[metric].idxmax()
+    pathless_best_rows = pathless_df.loc[pathless_idx]
+    pathless_info = pathless_best_rows.groupby(
+        ["depth", "width", "optimal_path"]
+    ).agg(
+        mean=(metric, np.mean),
+        sem=((f"{error_metric}", "first")),
+        count=(metric, "count"),
+        max=(metric, np.max),
+        data=(metric, series_to_list),
+    )
+    pathless_info = pathless_info.reset_index()
+    pathless_info = pathless_info.sort_values(
+        ["depth", "width", "optimal_path"]
+    )
+
+    capacities = (
+        pathless_info[["depth", "width"]]
+        .drop_duplicates()
+        .sort_values(["depth", "width"])
+        .itertuples(index=False, name=None)
+    )
+    capacities = list(capacities)
+    labels = [f"{d}x{w}" for d, w in capacities]
+
+    def _best_lr_seed_values(
+        sub_df: pd.DataFrame,
+    ) -> Optional[np.ndarray]:
+        if sub_df.empty:
+            return None
+        tmp = sub_df.copy()
+        best_idx = tmp[metric].idxmax()
+        candidate = sub_df.loc[best_idx, dot_metric]
+        return np.array(candidate)
+
+    p_values = {}
+    for d_i, w_i in capacities:
+        size_i = f"{d_i}x{w_i}"
+        df_sub_i = pathless_df[
+            (pathless_df["depth"] == d_i)
+            & (pathless_df["width"] == w_i)
+        ]
+        data_i = _best_lr_seed_values(df_sub_i)
+
+        p_values[size_i] = {}
+        for d_j, w_j in capacities:
+            size_j = f"{d_j}x{w_j}"
+            df_sub_j = path_df[
+                (path_df["depth"] == d_j)
+                & (path_df["width"] == w_j)
+            ]
+            data_j = _best_lr_seed_values(df_sub_j)
+
+            _, p_value = stats.ttest_ind(
+                data_i, data_j,
+                equal_var=True,
+                alternative="less",
+            )
+            p_values[size_i][size_j] = p_value
+
+    p_values_df = pd.DataFrame(p_values)
+    print(p_values_df)
+
+    mask = np.zeros_like(p_values_df.values, dtype=bool)
+    size_labels = list(p_values_df.index)
+
+    for i, size_i in enumerate(size_labels):
+        for j, size_j in enumerate(size_labels):
+            d_i, w_i = map(int, size_i.split("x"))
+            d_j, w_j = map(int, size_j.split("x"))
+            total_size_i = d_i * w_i
+            total_size_j = d_j * w_j
+            if total_size_i > total_size_j:
+                mask[i, j] = True
+
+    custom_cmap = ListedColormap(["gray", "green"])
+    color_matrix = (p_values_df <= 0.05).astype(int)
+
+    fig = plt.figure(figsize=(6, 8))
+    ax = sns.heatmap(
+        color_matrix,
+        mask=mask,
+        annot=p_values_df,
+        fmt=".2f",
+        cmap=custom_cmap,
+        square=True,
+        linewidths=0.1,
+        cbar=False,
+        annot_kws={"size": 16},
+    )
+    ax.tick_params(axis="both", labelsize=16)
+    plt.gca().grid(False)
+
+    legend_elements = [
+        Patch(
+            facecolor="green",
+            label="$p \\leq 0.05$ (significant)",
+        ),
+        Patch(
+            facecolor="gray",
+            label="$p > 0.05$ (not significant)",
+        ),
+    ]
+    plt.legend(
+        handles=legend_elements,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.30),
+        ncol=1,
+        fontsize=22,
+    )
+
+    ax.set_title(
+        f"P-values for the Null Hypothesis\n"
+        f"No Path $\\geq$ {path_label}",
+        fontsize=26,
+        pad=100,
+    )
+    plt.xlabel(
+        f"Network Size ({pathless_label})", fontsize=26
+    )
+    plt.ylabel(
+        f"Network Size ({path_label})", fontsize=26
+    )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    png_path = output_path.replace(".pdf", ".png")
+    fig.savefig(png_path, dpi=150)
+    plt.close(fig)
+
+
+def _plot_total_reward_by_capacity(
     paths: List[Tuple[str, pd.DataFrame]],
     metric: str,
     dot_metric: Optional[str],
@@ -785,49 +943,50 @@ def _plot_grouped_bars_path_vs_pathless_by_capacity(
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fig.tight_layout(pad=1.5)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    png_path = output_path.replace(".pdf", ".png")
+    fig.savefig(png_path, dpi=150, bbox_inches="tight")
     # plt.show()
     plt.close(fig)
 
 
 if __name__ == "__main__":
-    outdir = "plots"
-    misleading_path = "misleading_path_results.json"
-    path_and_no_path = "path_and_no_path_results.json"
-    visited_cells = "visited_paths.json"
-    suboptimal_path = "suboptimal_results.json"
-    random_path = "random_path_results.json"
-    landmarks = "landmarks_path_results.json"
-    landmarks_grey = "landmarks_grey_results.json"
-    landmarks_black = "landmarks_black_results.json"
-    landmarks_extra = "landmarks_extra_results.json"
+    outdir = "deep_plots_extra_seeds"
+    misleading_path = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_MISLEADING_PATH_aggregation_progress.jsonl"
+    none = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_NONE_aggregation_progress.jsonl"
+    optimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_SHORTEST_PATH_aggregation_progress.jsonl"
+    # visited_cells = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_VISITED_CELLS_aggregation_progress.jsonl"
+    suboptimal_path = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_SUBOPTIMAL_PATH_aggregation_progress.jsonl"
+    random_path = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_RANDOM_PATH_aggregation_progress.jsonl"
+    landmarks = "/Users/frasermince/Programming/hidden_llava/current_processed/full_run_deep_parquet_mar_25/full_run_deep_parquet_mar_25_path_mode_LANDMARKS_aggregation_progress.jsonl"
     misleading_path_df = load_results(misleading_path)
-    path_and_no_path_df = load_results(path_and_no_path)
-    visited_cells_df = load_results(visited_cells)
+    none_df = load_results(none)
+    optimal_path_df = load_results(optimal_path)
+    # visited_cells_df = load_results(visited_cells)
     suboptimal_path_df = load_results(suboptimal_path)
     random_path_df = load_results(random_path)
-    # landmarks_df = load_results(landmarks)
-    landmarks_grey_df = load_results(landmarks_grey)
-    landmarks_black_df = load_results(landmarks_black)
-    landmarks_extra_df = load_results(landmarks_extra)
+    landmarks_df = load_results(landmarks)
 
     parser = argparse.ArgumentParser()
-    shared_colors = _build_pair_color_map(path_and_no_path_df)
+    shared_colors = _build_pair_color_map(none_df)
     just_misleading_path = [("Misleading Path", misleading_path_df)]
-    just_visited_cells = [("Non Stationary Path", visited_cells_df)]
+    just_none = [("No Path", none_df)]
+    just_optimal_path = [("Optimal Path", optimal_path_df)]
+    # just_visited_cells = [("Non Stationary Path", visited_cells_df)]
     just_suboptimal_path = [("Suboptimal Path", suboptimal_path_df)]
     just_random_path = [("Random Path", random_path_df)]
-    # just_landmarks = [("Landmarks", landmarks_df)]
+    just_landmarks = [("Landmarks", landmarks_df)]
     for paths in [
-        # just_misleading_path,
+        just_misleading_path,
+        just_none,
+        just_optimal_path,
         # just_visited_cells,
-        # just_suboptimal_path,
-        # just_random_path,
-        # just_landmarks,
+        just_suboptimal_path,
+        just_random_path,
+        just_landmarks,
     ]:
-        _plot_best_auc_reward_curves_side_by_side(
-            paths=paths,
-            title_base="Avg Reward Curve at Best AUC LR",
-            ylabel="Average Reward",
+        _plot_best_avg_reward_curves(
+            label=paths[0][0],
+            df=paths[0][1],
             shared_colors=shared_colors,
             output_path=os.path.join(
                 outdir,
@@ -835,10 +994,8 @@ if __name__ == "__main__":
             ),
         )
 
-        _plot_side_by_side_path_vs_pathless(
+        _plot_step_size_sweep(
             paths=paths,
-            metric="average_reward_area_under_curve",
-            title="Avg Reward AUC across Learning Rates",
             ylabel="Total Reward",
             shared_colors=shared_colors,
             output_path=os.path.join(
@@ -848,21 +1005,14 @@ if __name__ == "__main__":
         )
 
     paths = [
-        # ("No Path", path_and_no_path_df[path_and_no_path_df["optimal_path"] == False]),
-        # ("Random Path", random_path_df),
-        # ("Landmarks", landmarks_df),
-        # ("Non Stationary Path", visited_cells_df),
-        # ("Misleading Path", misleading_path_df),
-        # ("Suboptimal Path", suboptimal_path_df),
-        # (
-        #     "Optimal Path",
-        #     path_and_no_path_df[path_and_no_path_df["optimal_path"] == True],
-        # ),
-        ("Landmarks Grey", landmarks_grey_df),
-        ("Landmarks Black", landmarks_black_df),
-        ("Landmarks Extra", landmarks_extra_df),
+        ("No Path", none_df),
+        ("Random Path", random_path_df),
+        ("Landmarks", landmarks_df),
+        ("Misleading Path", misleading_path_df),
+        ("Suboptimal Path", suboptimal_path_df),
+        ("Optimal Path", optimal_path_df),
     ]
-    _plot_grouped_bars_path_vs_pathless_by_capacity(
+    _plot_total_reward_by_capacity(
         paths=paths,
         metric="average_reward_area_under_curve",
         dot_metric="per_seed_aucs",
@@ -877,3 +1027,29 @@ if __name__ == "__main__":
         agg="max",
         show_sample_dots=True,
     )
+
+    p_val_experiments = [
+        ("Optimal Path", optimal_path_df),
+        ("Suboptimal Path", suboptimal_path_df),
+        ("Misleading Path", misleading_path_df),
+        ("Random Path", random_path_df),
+        ("Landmarks", landmarks_df),
+    ]
+    for path_label, path_variant_df in p_val_experiments:
+        _plot_pvals(
+            pathless_df=none_df,
+            path_df=path_variant_df,
+            metric="average_reward_area_under_curve",
+            dot_metric="per_seed_aucs",
+            error_metric="per_seed_auc_standard_error",
+            title="",
+            xlabel="Network Size",
+            ylabel="Total Reward",
+            path_label=path_label,
+            output_path=os.path.join(
+                outdir,
+                f"{path_label}_pvals.pdf",
+            ),
+            agg="max",
+            show_sample_dots=True,
+        )
