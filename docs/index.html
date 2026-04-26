@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artifacts as Memory Beyond the Agent Boundary</title>
+<meta name="description" content="A formalism and empirical study of how reinforcement learning agents externalize memory through environmental artifacts.">
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.4/css/bulma.min.css">
+<link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.15.4/css/all.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/jpswalsh/academicons@1/css/academicons.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]});"></script>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<section class="hero">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <div class="columns is-centered">
+        <div class="column has-text-centered">
+          <h1 class="title is-1 publication-title">Artifacts as Memory<br>Beyond the Agent Boundary</h1>
+          <div class="is-size-5 publication-authors">
+            <span class="author-block"><a href="https://jdmartin86.github.io/">John D. Martin</a><sup>1,2,&dagger;</sup>,</span>
+            <span class="author-block"><a href="https://frasermince.com/">Fraser Mince</a><sup>3,&dagger;</sup>,</span>
+            <span class="author-block"><a href="https://esraasaleh.com/">Esra'a Saleh</a><sup>3,4,5</sup>,</span>
+            <span class="author-block"><a href="https://amypajak.com/">Amy Pajak</a><sup>3,6</sup></span>
+          </div>
+
+          <div class="is-size-6 publication-authors">
+            <span class="author-block"><sup>1</sup>Openmind Research Institute,</span>
+            <span class="author-block"><sup>2</sup>University of Alberta,</span>
+            <span class="author-block"><sup>3</sup>Cohere Labs Community,</span>
+            <span class="author-block"><sup>4</sup>Universit&eacute; de Montr&eacute;al,</span>
+            <span class="author-block"><sup>5</sup>Mila &mdash; Qu&eacute;bec AI Institute,</span>
+            <span class="author-block"><sup>6</sup>University of Pennsylvania</span>
+            <br>
+            <span class="author-block"><sup>&dagger;</sup>Equal contribution</span>
+          </div>
+
+          <div class="column has-text-centered">
+            <div class="publication-links">
+              <span class="link-block">
+                <a href="https://arxiv.org/pdf/2604.08756" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fas fa-file-pdf"></i></span>
+                  <span>Paper</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a href="https://arxiv.org/abs/2604.08756" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="ai ai-arxiv"></i></span>
+                  <span>arXiv</span>
+                </a>
+              </span>
+              <span class="link-block">
+                <a href="https://github.com/frasermince/extended-mind" class="external-link button is-normal is-rounded is-dark">
+                  <span class="icon"><i class="fab fa-github"></i></span>
+                  <span>Code</span>
+                </a>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="hero teaser">
+  <div class="container is-max-desktop">
+    <div class="hero-body">
+      <figure class="image teaser-figure">
+        <img src="figures/environments.png" alt="Environments considered for learning in the presence of other fixed artifacts.">
+      </figure>
+      <h2 class="subtitle has-text-centered">
+        Reinforcement learning agents can use the <span class="dnerf">environment</span> as a form of memory &mdash;
+        unintentionally, and through the conventional sensory stream alone.
+      </h2>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-four-fifths">
+        <h2 class="title is-3">Abstract</h2>
+        <div class="content has-text-justified">
+          <p>
+            The situated view of cognition holds that intelligent behavior depends not only on internal memory,
+            but on an agent's active use of environmental resources. Here, we begin formalizing this intuition
+            within Reinforcement Learning (RL). We introduce a mathematical framing for how the environment can
+            functionally serve as an agent's memory, and prove that certain observations, which we call
+            <em>artifacts</em>, can reduce the information needed to represent history. We corroborate our theory
+            with experiments showing that when agents observe spatial paths, the amount of memory required to
+            learn a performant policy is reduced. Interestingly, this effect arises unintentionally, and
+            implicitly through the agent's sensory stream. We discuss the implications of our findings, and show
+            they satisfy qualitative properties previously used to ground accounts of external memory. Moving
+            forward, we anticipate further work on this subject could reveal principled ways to exploit the
+            environment as a substitute for explicit internal memory.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">A Formalism of Externalized Memory</h2>
+
+        <h3 class="title is-4">Artifacts</h3>
+        <div class="content has-text-justified">
+          <p>
+            We formalize <em>artifacts</em> as features of the environment that help an agent remember its past:
+            a folded page corner, a string tied around a finger, a footprint in the snow.
+          </p>
+        </div>
+        <div class="definition-box">
+          <p class="def-label">Definition (Artifact)</p>
+          <p>An observation $o$ is an <strong>artifact</strong> of $o'$ if and only if $o' \neq o$ and for all $t$, if $O_t = o$, there exists some non-zero $t' < t$ such that $O_{t'} = o'$.</p>
+        </div>
+
+        <h3 class="title is-4">The Artifact Reduction Theorem</h3>
+        <div class="content has-text-justified">
+          <p>Our main theoretical result proves artifacts strictly reduce the information needed to represent a history.</p>
+        </div>
+        <div class="definition-box">
+          <p class="def-label">Theorem (Artifact Reduction)</p>
+          <p>
+            Let $\xi$ be an artifactual environment, and let $H$ be a history from $\xi$ containing $m>1$
+            observations and at least one artifact. There exists a reduced sequence $H'$ with $m-1$
+            observations such that
+          </p>
+          <p class="has-text-centered">$$\mathbb{I}(O_{t+1}; H) = \mathbb{I}(O_{t+1}; H').$$</p>
+        </div>
+
+        <h3 class="title is-4">Externalizing Memory</h3>
+        <div class="content has-text-justified">
+          <p>
+            An agent <em>externalizes memory</em> when achieving a goal requires more internal capacity in the
+            absence of environmental artifacts than when those artifacts are available. We compare an
+            artifactual environment $\xi$ to an artifactless copy $\xi'$ and require there exists $\pi'$ with
+            $P_\xi \geq P'_{\xi'}$ and capacity $C < C'$, while no smaller-capacity agent matches $\pi$'s
+            performance in $\xi'$.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered">
+      <div class="column is-full-width">
+        <h2 class="title is-3">Experiments</h2>
+        <div class="content has-text-justified">
+          <p>
+            Agents learn to navigate a $13\times13$ gridworld emitting noisy salt-and-pepper images. We compare
+            learning under different artifact conditions across a range of system capacities, with both Linear
+            Q-learning and DQN.
+          </p>
+        </div>
+
+        <div class="columns">
+          <div class="column">
+            <div class="exp-card">
+              <h4 class="title is-5">1. Minimum-length Path</h4>
+              <p>When the shortest path is visible, agents reach goal performance with substantially less internal capacity &mdash; well below the theoretical $169$-dimensional minimum.</p>
+            </div>
+          </div>
+          <div class="column">
+            <div class="exp-card">
+              <h4 class="title is-5">2. Other Fixed Artifacts</h4>
+              <p>Externalization persists across suboptimal, random, and even non-behavioral landmark artifacts &mdash; ruling out the explanation that agents merely follow the path.</p>
+            </div>
+          </div>
+          <div class="column">
+            <div class="exp-card">
+              <h4 class="title is-5">3. Dynamic Path</h4>
+              <p>In a non-stationary setting, agents leave behind their own fading trail, suggesting they read <em>and write</em> to the environment without explicit instruction.</p>
+            </div>
+          </div>
+        </div>
+
+        <figure class="image figure-block">
+          <div class="results-grid">
+            <div class="results-item">
+              <img src="figures/total_reward_all_seeds_30-59-linear.png" alt="Total reward vs. capacity for Linear Q-learning across artifact conditions.">
+              <p class="results-caption">Linear Q-learning</p>
+            </div>
+            <div class="results-item">
+              <img src="figures/total_reward_all_seeds_30-59-dqn.png" alt="Total reward vs. capacity for DQN across artifact conditions.">
+              <p class="results-caption">DQN</p>
+            </div>
+          </div>
+          <figcaption class="figure-caption">
+            Total reward as a function of system capacity, with and without artifacts.
+            Across both algorithms, the presence of an artifact reduces the capacity required to reach
+            comparable performance.
+          </figcaption>
+        </figure>
+
+        <div class="content has-text-justified">
+          <p>
+            Across every experiment, the use of external memory arises <strong>unintentionally</strong>. The
+            reward signal incentivizes only reaching the goal, never following or laying down a path, yet the artifact effect emerges naturally from reinforcement learning in a sufficiently complex environment.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="BibTeX">
+  <div class="container is-max-desktop content">
+    <h2 class="title">BibTeX</h2>
+    <pre><code>@misc{martin2026artifactsmemoryagentboundary,
+    title = {Artifacts as Memory Beyond the Agent Boundary},
+    author = {John D. Martin and Fraser Mince and Esra'a Saleh and Amy Pajak},
+    year = {2026},
+    journal = {arXiv preprint arXiv: Arxiv-2604.08756}
+    }</code></pre>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="container">
+    <div class="columns is-centered">
+      <div class="column is-8">
+        <div class="content has-text-centered">
+          <p>
+            Website template adapted from
+            <a href="https://github.com/nerfies/nerfies.github.io">Nerfies</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,206 @@
+@import url('https://fonts.googleapis.com/css?family=Google+Sans|Noto+Sans|Castoro');
+
+:root {
+  --accent: #3273dc;       /* Bulma link blue */
+  --accent-soft: #eaf2fd;
+  --accent-strong: #2366d1;
+  --ink: #2c2f33;
+  --muted: #6b6b6b;
+  --surface: #ffffff;
+  --surface-alt: #f7f9fc;
+  --line: #e6e9ef;
+}
+
+body {
+  font-family: 'Noto Sans', sans-serif;
+  color: var(--ink);
+}
+
+.publication-title,
+.title,
+.subtitle {
+  font-family: 'Google Sans', sans-serif !important;
+}
+
+.publication-title {
+  font-weight: 700 !important;
+}
+
+.publication-authors {
+  margin-top: 1rem;
+  font-family: 'Google Sans', sans-serif;
+}
+
+.publication-authors .author-block {
+  display: inline-block;
+  margin-right: 0.4rem;
+}
+
+.publication-authors a {
+  color: var(--accent);
+}
+
+.publication-links {
+  margin-top: 1.5rem;
+}
+
+.publication-links .link-block {
+  margin: 0.25rem;
+  display: inline-block;
+}
+
+.hero.teaser {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.teaser-figure {
+  margin: 0 auto;
+}
+
+.teaser-figure img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.figure-block {
+  margin: 2rem 0;
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+  align-items: end;
+}
+
+.results-item {
+  text-align: center;
+}
+
+.results-item img {
+  display: block;
+  margin: 0 auto;
+  max-width: 75%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.results-caption {
+  margin-top: 0.5rem;
+  font-family: 'Google Sans', sans-serif;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.figure-caption {
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.figure-block .placeholder,
+.teaser-figure .placeholder {
+  background: var(--surface-alt);
+  border: 1px dashed #c4c4c4;
+  border-radius: 8px;
+  padding: 4rem 2rem;
+  text-align: center;
+  color: #555;
+}
+
+.dnerf {
+  font-variant: small-caps;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* ---------- Modern definition / theorem boxes ---------- */
+.definition-box {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 1.5rem 0 2rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04),
+              0 6px 20px -8px rgba(15, 23, 42, 0.06);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.definition-box:hover {
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06),
+              0 14px 30px -10px rgba(50, 115, 220, 0.18);
+}
+
+.definition-box .def-label {
+  display: block;
+  font-family: 'Google Sans', sans-serif;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  padding: 0.65rem 1.25rem;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.definition-box > p:not(.def-label) {
+  padding: 0 1.25rem;
+  margin: 0.9rem 0;
+}
+
+.definition-box > p:not(.def-label):first-of-type {
+  margin-top: 1rem;
+}
+
+.definition-box > p:not(.def-label):last-child {
+  margin-bottom: 1rem;
+}
+
+/* ---------- Experiment cards ---------- */
+.exp-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1.5rem;
+  height: 100%;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.exp-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+  box-shadow: 0 8px 22px -10px rgba(50, 115, 220, 0.35);
+}
+
+.exp-card h4 {
+  margin-bottom: 0.5rem !important;
+  color: var(--accent);
+}
+
+.exp-card p {
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* ---------- BibTeX ---------- */
+pre {
+  background: #f5f5f5;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.9rem;
+}
+
+.footer {
+  padding: 2rem 1.5rem;
+  background-color: var(--surface-alt);
+}
