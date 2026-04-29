@@ -1,3 +1,4 @@
+import gc
 import json
 import os
 from typing import Dict, List, Optional, Tuple, Any, Callable
@@ -7,7 +8,7 @@ import pandas as pd
 import matplotlib
 import seaborn as sns
 from scipy import stats
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
@@ -48,6 +49,7 @@ COLORS = [
 # Stable color mapping for path-type labels (so the same label always gets the same color)
 PATH_TYPE_COLORS = {
     "No Path": "#4c72b0",  # blue
+    "Artifactless": "#4c72b0",  # blue (alias for No Path)
     "Optimal Path": "#dd8452",  # orange
     "Misleading Path": "#55a868",  # green
     "Random Path": "#c44e52",  # red
@@ -177,6 +179,12 @@ def load_results(json_path: str) -> pd.DataFrame:
 
     df = pd.DataFrame.from_records(records)
     return df
+
+
+def load_results_many(json_paths: List[str]) -> pd.DataFrame:
+    """Load multiple JSON/JSONL result files and concatenate into one DataFrame."""
+    frames = [load_results(p) for p in json_paths]
+    return pd.concat(frames, ignore_index=True)
 
 
 def _to_pdf_path(path: str) -> str:
@@ -1068,6 +1076,138 @@ def _plot_total_reward_by_capacity(
     plt.close(fig)
 
 
+def _plot_total_reward_bars_full_range(
+    paths: List[Tuple[str, pd.DataFrame]],
+    metric: str,
+    dot_metric: Optional[str],
+    error_metric: str,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    output_path: str,
+    agg: str = "max",
+    show_error_bars: bool = True,
+    capsize: float = 3.0,
+    show_sample_dots: bool = True,
+    sample_dot_size: float = 12.0,
+    sample_dot_alpha: float = 0.75,
+) -> None:
+    """Bar chart over the full capacity range, styled to match
+    `_plot_total_reward_lines_by_path_type` so the two charts can sit
+    side by side. Bars are placed at edge_dim values on a continuous
+    x-axis (not categorical positions like `_plot_total_reward_by_capacity`)."""
+    if not paths:
+        return
+    for _, df in paths:
+        if df.empty:
+            return
+    if agg not in {"max", "mean"}:
+        raise ValueError("agg must be 'max' or 'mean'")
+
+    n_paths = len(paths)
+    bar_width = 0.8 / n_paths
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    x_per_path: List[np.ndarray] = []
+
+    for i, (path_label, df) in enumerate(paths):
+        color = COLORS[i % len(COLORS)]
+
+        idx_capacity = df.groupby(GROUP_COLS)[metric].idxmax()
+        best_rows = df.loc[idx_capacity]
+        stats = (
+            best_rows.groupby(GROUP_COLS)
+            .agg(
+                mean=(metric, np.mean),
+                sem=(error_metric, "first"),
+                max_val=(metric, np.max),
+            )
+            .reset_index()
+            .sort_values(GROUP_COLS)
+        )
+
+        x = stats["edge_dim"].values.astype(float)
+        y = stats["max_val"].values if agg == "max" else stats["mean"].values
+        yerr = stats["sem"].values if show_error_bars else None
+
+        offset = (i - (n_paths - 1) / 2) * bar_width
+        ax.bar(
+            x + offset,
+            y,
+            width=bar_width,
+            color=color,
+            label=path_label,
+            yerr=yerr,
+            capsize=capsize if show_error_bars else 0.0,
+        )
+        x_per_path.append(x)
+
+    if show_sample_dots and dot_metric is not None:
+
+        def _best_lr_seed_values(sub_df: pd.DataFrame) -> Optional[np.ndarray]:
+            if sub_df.empty:
+                return None
+            best_idx = sub_df[metric].idxmax()
+            candidate = sub_df.loc[best_idx, dot_metric]
+            return np.array(candidate)
+
+        for i, (path_label, df) in enumerate(paths):
+            color = COLORS[i % len(COLORS)]
+            offset = (i - (n_paths - 1) / 2) * bar_width
+            for edge_dim_val in x_per_path[i]:
+                sub = df[df["edge_dim"] == int(edge_dim_val)]
+                vals = _best_lr_seed_values(sub)
+                if vals is None or vals.size == 0:
+                    continue
+                xs = [edge_dim_val + offset] * vals.size
+                ax.scatter(
+                    xs,
+                    vals,
+                    s=sample_dot_size,
+                    color=color,
+                    edgecolors="white",
+                    linewidths=0.4,
+                    alpha=sample_dot_alpha,
+                    zorder=1,
+                )
+
+    all_edge_dims = np.unique(np.concatenate(x_per_path)) if x_per_path else np.array([])
+    ax.set_xticks(all_edge_dims)
+    ax.set_xticklabels(
+        [str(int(d**2)) for d in all_edge_dims], rotation=45, ha="right"
+    )
+    if all_edge_dims.size:
+        ax.set_xlim(all_edge_dims.min() - 0.5, all_edge_dims.max() + 0.5)
+
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    if title:
+        ax.set_title(title, fontsize=16)
+    ax.tick_params(axis="both", which="major", labelsize=12)
+
+    yticks = np.linspace(0, 12000, 7)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([int(t) for t in yticks])
+    ax.set_ylim(0, 12000)
+    _strip_axes(ax)
+
+    legend = ax.legend(
+        fontsize=12,
+        title_fontsize=12,
+        loc="upper left",
+        frameon=True,
+        framealpha=0.5,
+    )
+    legend.get_frame().set_facecolor("white")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(_to_pdf_path(output_path), dpi=150, bbox_inches="tight")
+    fig.savefig(f"{output_path}.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _plot_total_reward_lines_by_path_type(
     paths: List[Tuple[str, pd.DataFrame]],
     metric: str,
@@ -1166,6 +1306,174 @@ def _plot_total_reward_lines_by_path_type(
         frameon=True,
         framealpha=0.5,
         edgecolor="none",
+    )
+    legend.get_frame().set_facecolor("white")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(_to_pdf_path(output_path), dpi=150, bbox_inches="tight")
+    fig.savefig(f"{output_path}.png", dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_externalization_curves(
+    pathless_df: pd.DataFrame,
+    path_df: pd.DataFrame,
+    pathless_label: str,
+    path_label: str,
+    metric: str,
+    dot_metric: str,
+    error_metric: str,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    output_path: str,
+    agg: str = "max",
+) -> None:
+    """Plot artifactual vs artifactless mean performance curves with the
+    externalization region shaded between them.
+
+    The shaded region covers every capacity X where the path agent at X is
+    significantly higher than the artifactless agent at X (same-capacity
+    t-test, p ≤ 0.05). No error bands; no C, C', or P = P' annotations.
+    """
+    if pathless_df.empty or path_df.empty:
+        return
+
+    def _aggregate(df: pd.DataFrame) -> pd.DataFrame:
+        idx = df.groupby(GROUP_COLS)[metric].idxmax()
+        best_rows = df.loc[idx]
+        return (
+            best_rows.groupby(GROUP_COLS)
+            .agg(
+                mean=(metric, np.mean),
+                sem=(error_metric, "first"),
+                max_val=(metric, np.max),
+            )
+            .reset_index()
+            .sort_values(GROUP_COLS)
+        )
+
+    pathless_stats = _aggregate(pathless_df)
+    path_stats = _aggregate(path_df)
+
+    common = sorted(
+        set(pathless_stats["edge_dim"]).intersection(set(path_stats["edge_dim"]))
+    )
+    pathless_stats = (
+        pathless_stats[pathless_stats["edge_dim"].isin(common)]
+        .sort_values("edge_dim")
+        .reset_index(drop=True)
+    )
+    path_stats = (
+        path_stats[path_stats["edge_dim"].isin(common)]
+        .sort_values("edge_dim")
+        .reset_index(drop=True)
+    )
+
+    x = np.array(common, dtype=float)
+    y_pathless = (
+        pathless_stats["max_val"].values
+        if agg == "max"
+        else pathless_stats["mean"].values
+    )
+    y_path = (
+        path_stats["max_val"].values
+        if agg == "max"
+        else path_stats["mean"].values
+    )
+
+    # Same-capacity significance: at each X, test path-X vs pathless-X.
+    # H0: pathless >= path; reject => path significantly higher.
+    def _best_lr_seed_values(df: pd.DataFrame, edge_dim: int) -> Optional[np.ndarray]:
+        sub = df[df["edge_dim"] == edge_dim]
+        if sub.empty:
+            return None
+        best_idx = sub[metric].idxmax()
+        return np.array(sub.loc[best_idx, dot_metric])
+
+    n = len(common)
+    same_cap_sig = np.zeros(n, dtype=bool)
+    print(
+        f"[curves] {path_label} vs {pathless_label} same-cap p-values "
+        f"(cap, edge_dim, p_raw, p_rounded, sig):"
+    )
+    for i, ed in enumerate(common):
+        data_path = _best_lr_seed_values(path_df, ed)
+        data_pathless = _best_lr_seed_values(pathless_df, ed)
+        if data_path is None or data_pathless is None:
+            print(f"  cap={int(ed**2):>4}  edge_dim={ed:>2}  (missing data)")
+            continue
+        _, p_val = stats.ttest_ind(
+            data_pathless, data_path, equal_var=True, alternative="less"
+        )
+        # Round to 2 decimals to match the heatmap's annotation precision so
+        # the curves chart and heatmap agree on borderline cells.
+        p_raw = float(p_val)
+        p_rounded = round(p_raw, 2)
+        same_cap_sig[i] = p_rounded <= 0.05
+        print(
+            f"  cap={int(ed**2):>4}  edge_dim={ed:>2}  "
+            f"p_raw={p_raw:.6f}  p_rounded={p_rounded:.2f}  "
+            f"sig={same_cap_sig[i]}"
+        )
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+
+    pathless_color = _get_path_type_color(pathless_label)
+    path_color = _get_path_type_color(path_label)
+
+    ax.fill_between(
+        x,
+        y_pathless,
+        y_path,
+        where=same_cap_sig,
+        color="#9b8fbf",
+        alpha=0.4,
+        linewidth=0,
+        label="Externalizes Memory",
+    )
+
+    ax.plot(
+        x,
+        y_pathless,
+        marker="o",
+        linewidth=1.8,
+        color=pathless_color,
+        label=pathless_label,
+    )
+    ax.plot(
+        x,
+        y_path,
+        marker="o",
+        linewidth=1.8,
+        color=path_color,
+        label=path_label,
+    )
+
+    tick_edge_dims = np.arange(0, 25, 4)
+    ax.set_xticks(tick_edge_dims)
+    ax.set_xticklabels([str(int(d**2)) for d in tick_edge_dims])
+    ax.set_xlim(0, 24)
+
+    ax.set_xlabel(xlabel, fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    if title:
+        ax.set_title(title, fontsize=16)
+    ax.tick_params(axis="both", which="major", labelsize=12)
+
+    yticks = np.linspace(0, 10000, 6)
+    ax.set_yticks(yticks)
+    ax.set_yticklabels([int(t) for t in yticks])
+    ax.set_ylim(0, 10000)
+    _strip_axes(ax)
+
+    legend = ax.legend(
+        fontsize=12,
+        title_fontsize=12,
+        loc="lower right",
+        frameon=True,
+        framealpha=0.5,
     )
     legend.get_frame().set_facecolor("white")
 
@@ -1297,23 +1605,31 @@ def _plot_pvals(
     p_values_df = pd.DataFrame(p_values)
     print(p_values_df)
 
-    # Create a mask for the lower triangle (size_i < size_j)
-    # We'll mask out the lower triangle so only upper triangle shows
-    mask = np.zeros_like(p_values_df.values, dtype=bool)
-    size_labels = list(p_values_df.index)
+    # Scale figure + font sizes when the matrix grows beyond ~5x5 (full range
+    # uses ~13+ capacities); below that, keep the original tuning. Title pad
+    # and legend offset are also rescaled — at the larger figure size, the
+    # original `bbox_to_anchor=(0.5, 1.30)` pushes the top legend entry off
+    # the canvas.
+    n_caps = len(capacities)
+    if n_caps > 8:
+        fig_w = max(6.0, 0.6 * n_caps)
+        fig_h = max(8.0, 0.6 * n_caps + 4)
+        annot_size = 12
+        tick_label_size = 14
+        legend_loc = "lower center"
+        legend_bbox = (0.5, 1.02)
+        legend_ncol = 2
+        title_pad = 110
+    else:
+        fig_w, fig_h = 6.0, 8.0
+        annot_size = 20
+        tick_label_size = 20
+        legend_loc = "upper center"
+        legend_bbox = (0.5, 1.30)
+        legend_ncol = 1
+        title_pad = 100
 
-    for i, size_i in enumerate(size_labels):
-        for j, size_j in enumerate(size_labels):
-            # Parse dimensions to compare sizes
-            edge_dim_i = int(size_i)
-            edge_dim_j = int(size_j)
-
-            # Mask if edge_dim_i > edge_dim_j (hide lower triangle)
-            if edge_dim_i > edge_dim_j:
-                mask[i, j] = True
-
-    # Create the plot
-    fig = plt.figure(figsize=(6, 8))
+    fig = plt.figure(figsize=(fig_w, fig_h))
     plt.rcParams["font.family"] = "sans-serif"
     plt.rcParams["font.sans-serif"] = [
         "Helvetica",
@@ -1326,19 +1642,62 @@ def _plot_pvals(
 
     custom_cmap = ListedColormap(["gray", "green"])
 
-    color_matrix = (p_values_df <= 0.05).astype(int)
+    # Use the same rounded comparison as the verdict so a cell displayed
+    # "0.05" is rendered green (significant), matching what the externalization
+    # chart shades. Keep this as a DataFrame so sns.heatmap picks up the
+    # capacity tick labels from its index/columns.
+    color_matrix = (np.round(p_values_df, 2) <= 0.05).astype(int)
     ax = sns.heatmap(
         color_matrix,
-        mask=mask,
         annot=p_values_df,
         fmt=".2f",
         cmap=custom_cmap,
         square=True,
         linewidths=0.1,
         cbar=False,
-        annot_kws={"size": 20},
+        annot_kws={"size": annot_size},
     )
-    ax.tick_params(axis="both", labelsize=20)
+    ax.tick_params(axis="both", labelsize=tick_label_size)
+
+    # Per-row externalization verdict + outline of headline cells.
+    # Rows = path capacity (sorted ascending), cols = pathless capacity.
+    # Row r externalizes iff:
+    #   (C1) the cell immediately right of the diagonal (col r+1) is green
+    #        — there's a non-empty initial run of greens before pathless
+    #        catches up at C'. The run's length tells us how much less
+    #        capacity path needed; we only test that the run is non-empty.
+    #   (C2) every cell in cols 0..r is green — pathless of every equal-or-
+    #        smaller capacity is significantly worse than path. (Pending
+    #        confirmation with advisor; this is the strictest reading.)
+    # For each green upper-triangle cell in a passing row, overlay a thick
+    # black outline so the headline claim cells stand out.
+    # Round p-values to the same precision the heatmap annotates (2 decimals)
+    # before thresholding, so a cell displayed "0.05" is always significant.
+    sig = (np.round(p_values_df.values, 2) <= 0.05)
+    n_rows = sig.shape[0]
+    for r in range(n_rows):
+        cond1 = (r + 1 < n_rows) and bool(sig[r, r + 1])
+        cond2 = bool(sig[r, : r + 1].all())
+        if not (cond1 and cond2):
+            continue
+        # Border only the contiguous initial run of greens to the right of
+        # the diagonal — the cells up to C', where pathless first catches up.
+        # Stray greens past the first gray are noise and don't get bordered.
+        for c in range(r + 1, n_rows):
+            if not sig[r, c]:
+                break
+            inset = 0.06
+            ax.add_patch(
+                Rectangle(
+                    (c + inset, r + inset),
+                    1 - 2 * inset,
+                    1 - 2 * inset,
+                    fill=False,
+                    edgecolor="black",
+                    linewidth=1.5,
+                    zorder=10,
+                )
+            )
 
     plt.gca().grid(False)
 
@@ -1348,16 +1707,17 @@ def _plot_pvals(
     ]
     plt.legend(
         handles=legend_elements,
-        loc="upper center",
-        bbox_to_anchor=(0.5, 1.30),
-        ncol=1,
+        loc=legend_loc,
+        bbox_to_anchor=legend_bbox,
+        ncol=legend_ncol,
         fontsize=22,
     )
 
     ax.set_title(
-        f"P-values for the Null Hypothesis\n" f"No Path $\\geq$ {path_label}",
+        f"P-values for the Null Hypothesis\n"
+        f"{pathless_label} $\\geq$ {path_label}",
         fontsize=26,
-        pad=100,
+        pad=title_pad,
     )
     plt.xlabel(f"Capacity ({pathless_label})", fontsize=26)
     plt.ylabel(f"Capacity ({path_label})", fontsize=26)
@@ -2464,8 +2824,29 @@ def all_paths_main():
     )
 
 
+_CHART_SUBDIRS = {
+    "total_reward": "total_reward",
+    "sweeps": "sweeps",
+    "avg_reward": "average_reward",
+    "pvals": "pvals",
+    "tables": "tables",
+    "externalization": "externalization",
+}
+
+
+def _exp_path(root: str, experiment: str, chart_type: str, name: str) -> str:
+    return os.path.join(root, experiment, _CHART_SUBDIRS[chart_type], name)
+
+
+def _slug(label: str) -> str:
+    return label.lower().replace(" ", "_")
+
+
 def all_edge_dims_main():
-    outdir = "verification_seeds_all_edge_dims_linear_plots"
+    root = "linear_plots_final"
+    EXP1 = "experiment_1"
+    EXP2 = "experiment_2"
+    EXP3 = "experiment_3"
 
     outputs_name = "full_run_linear_parquet_all_edge_dims_april_7"
     base = (
@@ -2485,7 +2866,35 @@ def all_edge_dims_main():
         f"{base}/{outputs_name}_path_mode_VISITED_CELLS_confirmation.jsonl"
     )
 
-    # All edge dims (for line charts)
+    # Selection-phase results (full LR sweeps) live in separate dirs and are
+    # loaded only for the step-size sweep charts, which need every LR rather
+    # than the single best LR picked for confirmation.
+    selection_dirs = [
+        f"/Users/frasermince/Programming/hidden_llava/current_processed/all_edge_dims_linear_qlearning_even_edge_dims_feb_26",
+        f"/Users/frasermince/Programming/hidden_llava/current_processed/all_edge_dims_linear_qlearning_odd_edge_dims_feb_27",
+    ]
+
+    def _selection_files(path_mode: str) -> List[str]:
+        files = []
+        for sel_dir in selection_dirs:
+            dir_name = os.path.basename(sel_dir)
+            files.append(
+                f"{sel_dir}/{dir_name}_path_mode_{path_mode}_aggregation_progress.jsonl"
+            )
+        return files
+
+    SUBSET_EDGE_DIMS = [4, 8, 16, 20, 24]
+
+    def _filter_dims(df):
+        return df[df["edge_dim"].isin(SUBSET_EDGE_DIMS)]
+
+    # ==================================================================
+    # Phase 1 — full-range charts.
+    # Load the confirmation `_df`s, run every chart that needs every
+    # edge_dim, then filter to `_sub` and drop the full `_df` references
+    # so Phase 2 can free the memory before loading the larger
+    # selection-phase sweep dataframes.
+    # ==================================================================
     no_path_df = load_results(no_path)
     optimal_path_df = load_results(optimal_path)
     suboptimal_path_df = load_results(suboptimal_path)
@@ -2494,12 +2903,211 @@ def all_edge_dims_main():
     landmarks_df = load_results(landmarks_path)
     visited_cells_df = load_results(visited_cells_path)
 
-    # Filtered to subset of edge dims (for bar charts, sweeps, p-vals, etc.)
-    SUBSET_EDGE_DIMS = [4, 8, 16, 20, 24]
+    # Experiment 1 — pathless vs optimal, full-range bar chart
+    _plot_total_reward_bars_full_range(
+        paths=[("Artifactless", no_path_df), ("Optimal Path", optimal_path_df)],
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP1, "total_reward", "total_reward_pathless_path_full"
+        ),
+        agg="max",
+        show_sample_dots=True,
+    )
+    _plot_externalization_curves(
+        pathless_df=no_path_df,
+        path_df=optimal_path_df,
+        pathless_label="Artifactless",
+        path_label="Optimal Path",
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP1, "externalization", "externalization_optimal_path"
+        ),
+        agg="max",
+    )
 
-    def _filter_dims(df):
-        return df[df["edge_dim"].isin(SUBSET_EDGE_DIMS)]
+    # Experiment 2 — line chart over every path
+    _plot_total_reward_lines_by_path_type(
+        paths=[
+            ("Artifactless", no_path_df),
+            ("Random Path", random_path_df),
+            ("Landmarks", landmarks_df),
+            ("Misleading Path", misleading_path_df),
+            ("Suboptimal Path", suboptimal_path_df),
+            ("Optimal Path", optimal_path_df),
+        ],
+        metric="average_reward_area_under_curve",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP2, "total_reward", "total_reward_lines_by_path_type"
+        ),
+        agg="max",
+        show_error_bars=True,
+    )
 
+    # Experiment 2 — full-range bar chart per static path (Artifactless vs single)
+    exp2_full_bar_pairs = [
+        ("Optimal Path", optimal_path_df),
+        ("Suboptimal Path", suboptimal_path_df),
+        ("Misleading Path", misleading_path_df),
+        ("Random Path", random_path_df),
+        ("Landmarks", landmarks_df),
+    ]
+    for path_label, path_variant_df in exp2_full_bar_pairs:
+        _plot_total_reward_bars_full_range(
+            paths=[("Artifactless", no_path_df), (path_label, path_variant_df)],
+            metric="average_reward_area_under_curve",
+            dot_metric="per_seed_aucs",
+            error_metric="per_seed_auc_standard_error",
+            title="",
+            xlabel="Capacity",
+            ylabel="Total Reward",
+            output_path=_exp_path(
+                root,
+                EXP2,
+                "total_reward",
+                f"total_reward_{_slug(path_label)}_full",
+            ),
+            agg="max",
+            show_sample_dots=True,
+        )
+        _plot_externalization_curves(
+            pathless_df=no_path_df,
+            path_df=path_variant_df,
+            pathless_label="Artifactless",
+            path_label=path_label,
+            metric="average_reward_area_under_curve",
+            dot_metric="per_seed_aucs",
+            error_metric="per_seed_auc_standard_error",
+            title="",
+            xlabel="Capacity",
+            ylabel="Total Reward",
+            output_path=_exp_path(
+                root,
+                EXP2,
+                "externalization",
+                f"externalization_{_slug(path_label)}",
+            ),
+            agg="max",
+        )
+
+    # Experiment 3 — full-range bar chart + line chart for visited cells
+    _plot_total_reward_bars_full_range(
+        paths=[("Artifactless", no_path_df), ("Dynamic", visited_cells_df)],
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP3, "total_reward", "total_reward_dynamic_full"
+        ),
+        agg="max",
+        show_sample_dots=True,
+    )
+    _plot_total_reward_lines_by_path_type(
+        paths=[("Dynamic", visited_cells_df)],
+        metric="average_reward_area_under_curve",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP3, "total_reward", "total_reward_lines_visited_cells"
+        ),
+        agg="max",
+        show_error_bars=True,
+    )
+    _plot_externalization_curves(
+        pathless_df=no_path_df,
+        path_df=visited_cells_df,
+        pathless_label="Artifactless",
+        path_label="Dynamic",
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(
+            root, EXP3, "externalization", "externalization_dynamic"
+        ),
+        agg="max",
+    )
+
+    # Full-range p-value heatmaps. Run before Phase 1's del so we don't have
+    # to reload the full data later.
+    _plot_pvals(
+        pathless_df=no_path_df,
+        path_df=optimal_path_df,
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        path_label="Optimal Path",
+        pathless_label="Artifactless",
+        output_path=_exp_path(root, EXP1, "pvals", "optimal_path_pvals_full"),
+        agg="max",
+        show_sample_dots=True,
+    )
+    for path_label, path_variant_df in [
+        ("Optimal Path", optimal_path_df),
+        ("Suboptimal Path", suboptimal_path_df),
+        ("Misleading Path", misleading_path_df),
+        ("Random Path", random_path_df),
+        ("Landmarks", landmarks_df),
+    ]:
+        _plot_pvals(
+            pathless_df=no_path_df,
+            path_df=path_variant_df,
+            metric="average_reward_area_under_curve",
+            dot_metric="per_seed_aucs",
+            error_metric="per_seed_auc_standard_error",
+            title="",
+            xlabel="Capacity",
+            ylabel="Total Reward",
+            path_label=path_label,
+            pathless_label="Artifactless",
+            output_path=_exp_path(
+                root, EXP2, "pvals", f"{_slug(path_label)}_pvals_full"
+            ),
+            agg="max",
+            show_sample_dots=True,
+        )
+    _plot_pvals(
+        pathless_df=no_path_df,
+        path_df=visited_cells_df,
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        path_label="Dynamic Path",
+        pathless_label="Artifactless",
+        output_path=_exp_path(root, EXP3, "pvals", "dynamic_path_pvals_full"),
+        agg="max",
+        show_sample_dots=True,
+    )
+
+    # Filter to subset, drop the full _dfs and the temporary path-tuple list
+    # that still pins them. After `del + gc.collect()` the full dataframes
+    # are reclaimable before Phase 2 loads the heavier sweep data.
     no_path_sub = _filter_dims(no_path_df)
     optimal_path_sub = _filter_dims(optimal_path_df)
     suboptimal_path_sub = _filter_dims(suboptimal_path_df)
@@ -2508,22 +3116,58 @@ def all_edge_dims_main():
     landmarks_sub = _filter_dims(landmarks_df)
     visited_cells_sub = _filter_dims(visited_cells_df)
 
-    # All edge dims tuples (for line charts)
-    path_tuples_all = [
-        ("No Path", no_path_df),
-        ("Random Path", random_path_df),
-        ("Landmarks", landmarks_df),
-        ("Misleading Path", misleading_path_df),
-        ("Suboptimal Path", suboptimal_path_df),
-        ("Optimal Path", optimal_path_df),
-    ]
-    path_tuples_all_visited_cells = [
-        ("Dynamic", visited_cells_df),
-    ]
+    del (
+        no_path_df,
+        optimal_path_df,
+        suboptimal_path_df,
+        misleading_path_df,
+        random_path_df,
+        landmarks_df,
+        visited_cells_df,
+        exp2_full_bar_pairs,
+    )
+    gc.collect()
 
-    # Subset edge dims tuples (for everything else)
+    # ==================================================================
+    # Phase 2 — load sweep data, filter immediately, drop full sweep _df.
+    # The selection-phase sweep dataframes hold every learning rate (not
+    # just the winner), so they're substantially larger than confirmation
+    # data; we never need them in unfiltered form.
+    # ==================================================================
+    no_path_sweep_sub = _filter_dims(load_results_many(_selection_files("NONE")))
+    optimal_path_sweep_sub = _filter_dims(
+        load_results_many(_selection_files("SHORTEST_PATH"))
+    )
+    suboptimal_path_sweep_sub = _filter_dims(
+        load_results_many(_selection_files("SUBOPTIMAL_PATH"))
+    )
+    misleading_path_sweep_sub = _filter_dims(
+        load_results_many(_selection_files("MISLEADING_PATH"))
+    )
+    random_path_sweep_sub = _filter_dims(
+        load_results_many(_selection_files("RANDOM_PATH"))
+    )
+    landmarks_sweep_sub = _filter_dims(load_results_many(_selection_files("LANDMARKS")))
+    visited_cells_sweep_sub = _filter_dims(
+        load_results_many(_selection_files("VISITED_CELLS"))
+    )
+    gc.collect()
+
+    sweep_variants_by_label = {
+        "Artifactless": [("Artifactless", no_path_sweep_sub)],
+        "Optimal Path": [("Optimal Path", optimal_path_sweep_sub)],
+        "Suboptimal Path": [("Suboptimal Path", suboptimal_path_sweep_sub)],
+        "Misleading Path": [("Misleading Path", misleading_path_sweep_sub)],
+        "Random Path": [("Random Path", random_path_sweep_sub)],
+        "Landmarks": [("Landmarks", landmarks_sweep_sub)],
+        "Dynamic": [("Dynamic", visited_cells_sweep_sub)],
+    }
+
+    # ==================================================================
+    # Phase 3 — subset charts (using `_sub` and `_sweep_sub` only).
+    # ==================================================================
     just_optimal_path = [("Optimal Path", optimal_path_sub)]
-    just_no_path = [("No Path", no_path_sub)]
+    just_no_path = [("Artifactless", no_path_sub)]
     just_misleading_path = [("Misleading Path", misleading_path_sub)]
     just_suboptimal_path = [("Suboptimal Path", suboptimal_path_sub)]
     just_random_path = [("Random Path", random_path_sub)]
@@ -2531,61 +3175,29 @@ def all_edge_dims_main():
     just_visited_cells = [("Dynamic", visited_cells_sub)]
 
     path_tuples = [
-        ("No Path", no_path_sub),
+        ("Artifactless", no_path_sub),
         ("Random Path", random_path_sub),
         ("Landmarks", landmarks_sub),
         ("Misleading Path", misleading_path_sub),
         ("Suboptimal Path", suboptimal_path_sub),
         ("Optimal Path", optimal_path_sub),
     ]
-
     path_tuples_no_path_optimal = [
-        ("No Path", no_path_sub),
+        ("Artifactless", no_path_sub),
         ("Optimal Path", optimal_path_sub),
     ]
     path_tuples_no_path_dynamic = [
-        ("No Path", no_path_sub),
+        ("Artifactless", no_path_sub),
         ("Dynamic", visited_cells_sub),
     ]
 
-    path_variants = [
-        just_optimal_path,
-        just_no_path,
-        just_misleading_path,
-        just_suboptimal_path,
-        just_random_path,
-        just_landmarks,
-        just_visited_cells,
-    ]
-
     shared_colors = _build_pair_color_map(no_path_sub)
-    for paths in path_variants:
-        _plot_best_avg_reward_curves(
-            label=paths[0][0],
-            df=paths[0][1],
-            output_path=os.path.join(
-                outdir,
-                f"average_reward_{paths[0][0]}",
-            ),
-        )
-        print(os.path.join(outdir, f"average_reward_{paths[0][0]}"))
 
-    _plot_total_reward_by_capacity(
-        paths=path_tuples_no_path_dynamic,
-        metric="average_reward_area_under_curve",
-        dot_metric="per_seed_aucs",
-        error_metric="per_seed_auc_standard_error",
-        sample_dot_size=50,
-        title="",
-        xlabel="Capacity",
-        ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir,
-            "total_reward_dynamic",
-        ),
-        agg="max",
-        show_sample_dots=True,
-    )
+    # ------------------------------------------------------------------
+    # Experiment 1: pathless vs optimal (subset)
+    # ------------------------------------------------------------------
+    exp1_variants = [just_no_path, just_optimal_path]
+
     _plot_total_reward_by_capacity(
         paths=path_tuples_no_path_optimal,
         metric="average_reward_area_under_curve",
@@ -2595,57 +3207,52 @@ def all_edge_dims_main():
         title="",
         xlabel="Capacity",
         ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir,
-            "total_reward_pathless_path",
-        ),
+        output_path=_exp_path(root, EXP1, "total_reward", "total_reward_pathless_path"),
         agg="max",
         show_sample_dots=True,
     )
-    # _plot_total_reward_by_capacity(
-    #     paths=landmarks_tuples,
-    #     metric="average_reward_area_under_curve",
-    #     dot_metric="per_seed_aucs",
-    #     error_metric="per_seed_auc_standard_error",
-    #     sample_dot_size=50,
-    #     title="",
-    #     xlabel="Capacity",
-    #     ylabel="Total Reward",
-    #     output_path=os.path.join(
-    #         outdir,
-    #         "total_reward_landmarks",
-    #     ),
-    #     agg="max",
-    #     show_sample_dots=True,
-    # )
-    _plot_total_reward_lines_by_path_type(
-        paths=path_tuples_all,
+    for paths in exp1_variants:
+        label = paths[0][0]
+        _plot_best_avg_reward_curves(
+            label=label,
+            df=paths[0][1],
+            output_path=_exp_path(
+                root, EXP1, "avg_reward", f"average_reward_{_slug(label)}"
+            ),
+        )
+        _plot_step_size_sweep(
+            paths=sweep_variants_by_label[label],
+            ylabel="Total Reward",
+            shared_colors=shared_colors,
+            output_path=_exp_path(root, EXP1, "sweeps", f"sweeps_{_slug(label)}"),
+        )
+    _plot_pvals(
+        pathless_df=no_path_sub,
+        path_df=optimal_path_sub,
         metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
         error_metric="per_seed_auc_standard_error",
         title="",
         xlabel="Capacity",
         ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir,
-            "total_reward_lines_by_path_type",
-        ),
+        path_label="Optimal Path",
+        pathless_label="Artifactless",
+        output_path=_exp_path(root, EXP1, "pvals", "optimal_path_pvals"),
         agg="max",
-        show_error_bars=True,
+        show_sample_dots=True,
     )
-    _plot_total_reward_lines_by_path_type(
-        paths=path_tuples_all_visited_cells,
-        metric="average_reward_area_under_curve",
-        error_metric="per_seed_auc_standard_error",
-        title="",
-        xlabel="Capacity",
-        ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir,
-            "total_reward_lines_visited_cells",
-        ),
-        agg="max",
-        show_error_bars=True,
-    )
+
+    # ------------------------------------------------------------------
+    # Experiment 2: all static paths (subset)
+    # ------------------------------------------------------------------
+    exp2_variants = [
+        just_no_path,
+        just_random_path,
+        just_landmarks,
+        just_misleading_path,
+        just_suboptimal_path,
+        just_optimal_path,
+    ]
 
     _plot_total_reward_by_capacity(
         paths=path_tuples,
@@ -2656,34 +3263,33 @@ def all_edge_dims_main():
         title="",
         xlabel="Capacity",
         ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir,
-            "total_reward_all_paths",
-        ),
+        output_path=_exp_path(root, EXP2, "total_reward", "total_reward_all_paths"),
         agg="max",
         show_sample_dots=True,
     )
-
-    for paths in path_variants:
-        _plot_step_size_sweep(
-            paths=paths,
-            ylabel="Total Reward",
-            shared_colors=shared_colors,
-            output_path=os.path.join(
-                outdir,
-                f"sweeps_{paths[0][0]}",
+    for paths in exp2_variants:
+        label = paths[0][0]
+        _plot_best_avg_reward_curves(
+            label=label,
+            df=paths[0][1],
+            output_path=_exp_path(
+                root, EXP2, "avg_reward", f"average_reward_{_slug(label)}"
             ),
         )
-
-    p_val_experiments = [
+        _plot_step_size_sweep(
+            paths=sweep_variants_by_label[label],
+            ylabel="Total Reward",
+            shared_colors=shared_colors,
+            output_path=_exp_path(root, EXP2, "sweeps", f"sweeps_{_slug(label)}"),
+        )
+    exp2_pvals = [
         ("Optimal Path", optimal_path_sub),
         ("Suboptimal Path", suboptimal_path_sub),
         ("Misleading Path", misleading_path_sub),
         ("Random Path", random_path_sub),
         ("Landmarks", landmarks_sub),
-        ("Dynamic Path", visited_cells_sub),
     ]
-    for path_label, path_variant_df in p_val_experiments:
+    for path_label, path_variant_df in exp2_pvals:
         _plot_pvals(
             pathless_df=no_path_sub,
             path_df=path_variant_df,
@@ -2694,34 +3300,77 @@ def all_edge_dims_main():
             xlabel="Capacity",
             ylabel="Total Reward",
             path_label=path_label,
-            output_path=os.path.join(
-                outdir,
-                f"{path_label}_pvals",
-            ),
+            pathless_label="Artifactless",
+            output_path=_exp_path(root, EXP2, "pvals", f"{_slug(path_label)}_pvals"),
             agg="max",
             show_sample_dots=True,
         )
-    p_val_experiments = [
+    exp2_table = [
         ("Optimal", optimal_path_sub),
         ("Suboptimal", suboptimal_path_sub),
         ("Misleading", misleading_path_sub),
         ("Random", random_path_sub),
         ("Landmarks", landmarks_sub),
-        ("Dynamic Path", visited_cells_sub),
     ]
     _generate_latex_pvals_table(
         pathless_df=no_path_sub,
-        path_experiments=p_val_experiments,
+        path_experiments=exp2_table,
         metric="average_reward_area_under_curve",
         dot_metric="per_seed_aucs",
         error_metric="per_seed_auc_standard_error",
         title="",
         xlabel="Capacity",
         ylabel="Total Reward",
-        output_path=os.path.join(
-            outdir + "/tables",
-            "all_paths_table.tex",
-        ),
+        output_path=_exp_path(root, EXP2, "tables", "all_paths_table.tex"),
+    )
+
+    # ------------------------------------------------------------------
+    # Experiment 3: dynamic / visited cells (subset)
+    # ------------------------------------------------------------------
+    exp3_variants = [just_no_path, just_visited_cells]
+
+    _plot_total_reward_by_capacity(
+        paths=path_tuples_no_path_dynamic,
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        sample_dot_size=50,
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        output_path=_exp_path(root, EXP3, "total_reward", "total_reward_dynamic"),
+        agg="max",
+        show_sample_dots=True,
+    )
+    for paths in exp3_variants:
+        label = paths[0][0]
+        _plot_best_avg_reward_curves(
+            label=label,
+            df=paths[0][1],
+            output_path=_exp_path(
+                root, EXP3, "avg_reward", f"average_reward_{_slug(label)}"
+            ),
+        )
+        _plot_step_size_sweep(
+            paths=sweep_variants_by_label[label],
+            ylabel="Total Reward",
+            shared_colors=shared_colors,
+            output_path=_exp_path(root, EXP3, "sweeps", f"sweeps_{_slug(label)}"),
+        )
+    _plot_pvals(
+        pathless_df=no_path_sub,
+        path_df=visited_cells_sub,
+        metric="average_reward_area_under_curve",
+        dot_metric="per_seed_aucs",
+        error_metric="per_seed_auc_standard_error",
+        title="",
+        xlabel="Capacity",
+        ylabel="Total Reward",
+        path_label="Dynamic Path",
+        pathless_label="Artifactless",
+        output_path=_exp_path(root, EXP3, "pvals", "dynamic_path_pvals"),
+        agg="max",
+        show_sample_dots=True,
     )
 
 
